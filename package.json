@@ -10,20 +10,21 @@
     "tauri": "tauri"
   },
   "dependencies": {
-    "@monaco-editor/react": "^4.7.0",
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-opener": "^2",
+    "lucide-svelte": "^0.577.0",
     "monaco-editor": "^0.55.1",
-    "react": "^19.1.0",
-    "react-dom": "^19.1.0",
+    "svelte": "^5.53.12",
     "typst": "^0.10.0-8"
   },
   "devDependencies": {
-    "@types/react": "^19.1.8",
-    "@types/react-dom": "^19.1.6",
-    "@vitejs/plugin-react": "^4.6.0",
+    "@sveltejs/vite-plugin-svelte": "^5.0.0",
+    "@tailwindcss/vite": "^4.2.1",
+    "@tauri-apps/cli": "^2",
+    "autoprefixer": "^10.4.27",
+    "postcss": "^8.5.8",
+    "tailwindcss": "^4.2.1",
     "typescript": "~5.8.3",
-    "vite": "^7.0.4",
-    "@tauri-apps/cli": "^2"
+    "vite": "^7.0.4"
   }
 }

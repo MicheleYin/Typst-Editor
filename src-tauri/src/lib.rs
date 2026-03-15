@@ -1,7 +1,6 @@
 use tauri::command;
 use typst::diag::FileError;
 use typst::foundations::{Bytes, Datetime};
-use typst::layout::Abs;
 use typst::syntax::{FileId, Source};
 use typst::text::{Font, FontBook};
 use typst::{Library, LibraryExt, World};
@@ -72,18 +71,31 @@ impl World for SimpleWorld {
     }
 }
 
+#[derive(serde::Serialize)]
+struct CompilationResult {
+    pages: Vec<String>,
+    page_count: usize,
+}
+
 #[command]
-fn compile_typst(content: String) -> Result<String, String> {
+fn compile_typst(content: String) -> Result<CompilationResult, String> {
     let world = SimpleWorld::new(content);
-    let document = typst::compile(&world).output.map_err(|errs| {
+    let document: typst::layout::PagedDocument = typst::compile(&world).output.map_err(|errs| {
         errs.iter()
             .map(|e| e.message.to_string())
             .collect::<Vec<_>>()
             .join("\n")
     })?;
 
-    let svg = typst_svg::svg_merged(&document, Abs::zero());
-    Ok(svg)
+    let pages: Vec<String> = document
+        .pages
+        .iter()
+        .map(|page| typst_svg::svg(page))
+        .collect();
+
+    let page_count = pages.len();
+
+    Ok(CompilationResult { pages, page_count })
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
