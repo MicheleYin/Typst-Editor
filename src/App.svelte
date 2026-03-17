@@ -15,7 +15,6 @@
   import * as typstLanguage from "./typst-language";
   import Header from "./components/Header.svelte";
   import Sidebar from "./components/Sidebar.svelte";
-  import ActivityBar from "./components/ActivityBar.svelte";
 
   const DEFAULT_CONTENT = `// Welcome to the Typst Editor!
 
@@ -57,16 +56,6 @@ $ x^2 + y^2 = r^2 $
   let folderFiles = $state<{ name: string; path: string; isDirectory: boolean }[]>([]);
   let sidebarWidth = $state(260); // pixels
   let sidebarVisible = $state(true);
-  let activeSidebarTab = $state("explorer");
-
-  function toggleSidebar(tabId: string) {
-    if (activeSidebarTab === tabId && sidebarVisible) {
-      sidebarVisible = false;
-    } else {
-      activeSidebarTab = tabId;
-      sidebarVisible = true;
-    }
-  }
 
   async function handleOpenFile() {
     try {
@@ -348,11 +337,6 @@ $ x^2 + y^2 = r^2 $
   />
 
   <div class="flex flex-1 w-full overflow-hidden">
-    <ActivityBar 
-      activeTab={activeSidebarTab} 
-      onTabClick={toggleSidebar} 
-    />
-
     {#if sidebarVisible}
       <Sidebar 
         width={sidebarWidth} 
