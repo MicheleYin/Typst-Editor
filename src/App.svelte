@@ -2,7 +2,7 @@
   import { onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
   import * as monaco from "monaco-editor";
-  import { GripVertical, ZoomIn, ZoomOut, RotateCcw } from "lucide-svelte";
+  import { GripVertical, ZoomIn, ZoomOut, RotateCcw, ChevronLeft, ChevronRight } from "lucide-svelte";
   import * as typstLanguage from "./typst-language";
 
   const DEFAULT_CONTENT = `// Welcome to the Typst Editor!
@@ -24,6 +24,7 @@ $ x^2 + y^2 = r^2 $
   let content = $state(DEFAULT_CONTENT);
   let pages = $state<string[]>([]);
   let pageCount = $state(0);
+  let currentPage = $state(0);
   let error = $state("");
   let editorWidth = $state(50); // percentage
   let isResizing = $state(false);
@@ -44,6 +45,14 @@ $ x^2 + y^2 = r^2 $
       const result = await invoke<{ pages: string[], page_count: number }>("compile_typst", { content: text });
       pages = result.pages;
       pageCount = result.page_count;
+      
+      // Keep currentPage within bounds after recompilation
+      if (currentPage >= pageCount && pageCount > 0) {
+        currentPage = pageCount - 1;
+      } else if (pageCount === 0) {
+        currentPage = 0;
+      }
+      
       error = "";
     } catch (err) {
       error = err as string;
@@ -122,15 +131,6 @@ $ x^2 + y^2 = r^2 $
     isPanning = false;
   }
 
-  function handleWheel(e: WheelEvent) {
-    if (error) return;
-    e.preventDefault();
-
-    const delta = -e.deltaY;
-    const factor = Math.pow(1.1, delta / 100);
-    const newScale = Math.min(Math.max(scale * factor, 0.1), 10);
-    scale = newScale;
-  }
 
   function zoomIn() {
     scale = Math.min(scale * 1.2, 10);
@@ -142,6 +142,18 @@ $ x^2 + y^2 = r^2 $
     scale = 1;
     translateX = 0;
     translateY = 0;
+  }
+
+  function nextPage() {
+    if (currentPage < pageCount - 1) {
+      currentPage++;
+    }
+  }
+
+  function prevPage() {
+    if (currentPage > 0) {
+      currentPage--;
+    }
   }
 </script>
 
@@ -190,7 +202,6 @@ $ x^2 + y^2 = r^2 $
         ? 'cursor-grabbing'
         : 'cursor-grab'}"
       onmousedown={startPan}
-      onwheel={handleWheel}
     >
       {#if error}
         <div
@@ -205,9 +216,28 @@ $ x^2 + y^2 = r^2 $
         </div>
       {:else}
         <div class="absolute bottom-6 right-6 flex flex-col gap-2 z-20">
-          <div class="bg-white/90 px-3 py-2 text-gray-800 rounded-lg shadow-lg border border-gray-200 text-xs font-semibold mb-2">
-            Page {pageCount > 0 ? 1 : 0} of {pageCount}
+          <div class="flex items-center gap-1 bg-white/90 p-1 rounded-lg shadow-lg border border-gray-200 mb-2">
+            <button
+              onclick={prevPage}
+              disabled={currentPage === 0}
+              class="p-1.5 hover:bg-gray-100 disabled:opacity-30 disabled:hover:bg-transparent rounded-md transition-colors text-gray-700"
+              title="Previous Page"
+            >
+              <ChevronLeft size={18} />
+            </button>
+            <div class="px-2 text-xs font-bold text-gray-800 tabular-nums">
+              {pageCount > 0 ? currentPage + 1 : 0} / {pageCount}
+            </div>
+            <button
+              onclick={nextPage}
+              disabled={currentPage >= pageCount - 1}
+              class="p-1.5 hover:bg-gray-100 disabled:opacity-30 disabled:hover:bg-transparent rounded-md transition-colors text-gray-700"
+              title="Next Page"
+            >
+              <ChevronRight size={18} />
+            </button>
           </div>
+          
           <button
             onclick={zoomIn}
             class="p-2 bg-white/90 hover:bg-white text-gray-800 rounded-lg shadow-lg border border-gray-200 transition-all active:scale-95 group"
@@ -232,16 +262,16 @@ $ x^2 + y^2 = r^2 $
         </div>
 
         <div 
-            class="w-full h-full flex flex-col items-center overflow-auto p-12 gap-8"
+            class="w-full h-full flex flex-col items-center overflow-auto p-12"
         >
-          {#each pages as pageSnippet}
+          {#if pages[currentPage]}
             <div
               style:transform="translate({translateX}px, {translateY}px) scale({scale})"
               class="bg-white shadow-[0_0_50px_rgba(0,0,0,0.1)] rounded-sm min-w-[300px] transition-transform duration-75 ease-out flex-shrink-0 origin-top"
             >
-              {@html pageSnippet}
+              {@html pages[currentPage]}
             </div>
-          {/each}
+          {/if}
         </div>
       {/if}
     </div>
