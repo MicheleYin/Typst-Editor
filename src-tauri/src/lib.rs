@@ -1,4 +1,6 @@
 use tauri::command;
+use tauri::menu::{Menu, Submenu, MenuItem, PredefinedMenuItem};
+use tauri::Emitter;
 use typst::diag::FileError;
 use typst::foundations::{Bytes, Datetime};
 use typst::syntax::{FileId, Source};
@@ -104,7 +106,113 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
+        .setup(|app| {
+            let handle = app.handle();
+            
+            // File Menu
+            let new_file = MenuItem::with_id(handle, "file-new", "New File", true, Some("CmdOrCtrl+N"))?;
+            let open_file = MenuItem::with_id(handle, "file-open", "Open File...", true, Some("CmdOrCtrl+O"))?;
+            let open_folder = MenuItem::with_id(handle, "file-open-folder", "Open Folder...", true, Some("CmdOrCtrl+Shift+O"))?;
+            let save_file = MenuItem::with_id(handle, "file-save", "Save", true, Some("CmdOrCtrl+S"))?;
+            let save_as = MenuItem::with_id(handle, "file-save-as", "Save As...", true, Some("CmdOrCtrl+Shift+S"))?;
+            
+            let file_menu = Submenu::with_items(
+                handle,
+                "File",
+                true,
+                &[
+                    &new_file,
+                    &open_file,
+                    &open_folder,
+                    &PredefinedMenuItem::separator(handle)?,
+                    &save_file,
+                    &save_as,
+                ],
+            )?;
 
+            // Edit Menu
+            let edit_menu = Submenu::with_items(
+                handle,
+                "Edit",
+                true,
+                &[
+                    &PredefinedMenuItem::undo(handle, None)?,
+                    &PredefinedMenuItem::redo(handle, None)?,
+                    &PredefinedMenuItem::separator(handle)?,
+                    &PredefinedMenuItem::cut(handle, None)?,
+                    &PredefinedMenuItem::copy(handle, None)?,
+                    &PredefinedMenuItem::paste(handle, None)?,
+                    &PredefinedMenuItem::select_all(handle, None)?,
+                ],
+            )?;
+
+            // View Menu
+            let zoom_in = MenuItem::with_id(handle, "view-zoom-in", "Zoom In", true, Some("CmdOrCtrl+="))?;
+            let zoom_out = MenuItem::with_id(handle, "view-zoom-out", "Zoom Out", true, Some("CmdOrCtrl+-"))?;
+            let reset_zoom = MenuItem::with_id(handle, "view-reset-zoom", "Reset Zoom", true, Some("CmdOrCtrl+0"))?;
+            let toggle_sidebar = MenuItem::with_id(handle, "view-toggle-sidebar", "Toggle Sidebar", true, Some("CmdOrCtrl+B"))?;
+
+            let view_menu = Submenu::with_items(
+                handle,
+                "View",
+                true,
+                &[
+                    &zoom_in,
+                    &zoom_out,
+                    &reset_zoom,
+                    &PredefinedMenuItem::separator(handle)?,
+                    &toggle_sidebar,
+                ],
+            )?;
+
+            // Help Menu
+            let shortcuts = MenuItem::with_id(handle, "help-shortcuts", "Keyboard Shortcuts", true, Some("CmdOrCtrl+K CmdOrCtrl+S"))?;
+            let help_menu = Submenu::with_items(
+                handle,
+                "Help",
+                true,
+                &[
+                    &shortcuts,
+                    &PredefinedMenuItem::about(handle, None, None)?,
+                ],
+            )?;
+
+            let menu = Menu::with_items(
+                handle,
+                &[
+                    #[cfg(target_os = "macos")]
+                    &Submenu::with_items(
+                        handle,
+                        "Typst Editor",
+                        true,
+                        &[
+                            &PredefinedMenuItem::about(handle, None, None)?,
+                            &PredefinedMenuItem::separator(handle)?,
+                            &PredefinedMenuItem::services(handle, None)?,
+                            &PredefinedMenuItem::separator(handle)?,
+                            &PredefinedMenuItem::hide(handle, None)?,
+                            &PredefinedMenuItem::hide_others(handle, None)?,
+                            &PredefinedMenuItem::show_all(handle, None)?,
+                            &PredefinedMenuItem::separator(handle)?,
+                            &PredefinedMenuItem::quit(handle, None)?,
+                        ],
+                    )?,
+                    &file_menu,
+                    &edit_menu,
+                    &view_menu,
+                    &help_menu,
+                ],
+            )?;
+
+            handle.set_menu(menu)?;
+
+            app.on_menu_event(move |app_handle, event| {
+                let id = event.id().as_ref();
+                let _ = app_handle.emit("menu-event", id);
+            });
+
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![compile_typst])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

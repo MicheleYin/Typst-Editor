@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
   import * as monaco from "monaco-editor";
+  import { listen } from "@tauri-apps/api/event";
   import {
     GripVertical,
     ZoomIn,
@@ -15,6 +16,9 @@
   import * as typstLanguage from "./typst-language";
   import Header from "./components/Header.svelte";
   import Sidebar from "./components/Sidebar.svelte";
+  import Modal from "./components/Modal.svelte";
+  import ShortcutEditor from "./components/ShortcutEditor.svelte";
+  import { registerShortcut, discoverMonacoActions, type ShortcutAction } from "./lib/shortcuts";
 
   const DEFAULT_CONTENT = `// Welcome to the Typst Editor!
 
@@ -56,6 +60,8 @@ $ x^2 + y^2 = r^2 $
   let folderFiles = $state<{ name: string; path: string; isDirectory: boolean }[]>([]);
   let sidebarWidth = $state(260); // pixels
   let sidebarVisible = $state(true);
+  let isShortcutsModalOpen = $state(false);
+  let appZoom = $state(1);
 
   async function handleOpenFile() {
     try {
@@ -222,7 +228,6 @@ $ x^2 + y^2 = r^2 $
     const currentContent = content;
 
     const timeoutId = setTimeout(() => {
-      console.log("Triggering compilation...");
       compile(currentContent);
     }, 300);
     return () => clearTimeout(timeoutId);
@@ -266,9 +271,76 @@ $ x^2 + y^2 = r^2 $
       content = editor.getValue();
     });
 
+    // Register shortcuts and discover Monaco actions
+    try {
+      discoverMonacoActions(editor);
+
+      registerShortcut(editor, monaco, monaco.KeyCode.RightArrow, nextPage, "Next Page", "view.nextPage");
+      registerShortcut(editor, monaco, monaco.KeyCode.LeftArrow, prevPage, "Previous Page", "view.prevPage");
+    } catch (e) {
+      console.error("Failed to initialize shortcuts:", e);
+    }
+
+    // Sync Monaco font size with appZoom
+    const syncFontSize = () => {
+      if (editor) {
+        editor.updateOptions({ fontSize: 14 * appZoom });
+      }
+    };
+    
+    // We can't use $effect inside onMount for dependencies that change outside
+    // but we can watch appZoom if we put it in a separate effect or just here if it's fine.
+    // Actually, a top-level $effect is better for state tracking.
+    
+    // Listen for native menu events
+    const unlistenMenu = listen("menu-event", (event) => {
+      const id = event.payload as string;
+      
+      switch (id) {
+        case "file-new":
+          handleShortcutCommand("file.new");
+          break;
+        case "file-open":
+          handleOpenFile();
+          break;
+        case "file-open-folder":
+          handleOpenFolder();
+          break;
+        case "file-save":
+          handleSave();
+          break;
+        case "file-save-as":
+          handleSaveAs();
+          break;
+        case "view-zoom-in":
+          zoomIn();
+          break;
+        case "view-zoom-out":
+          zoomOut();
+          break;
+        case "view-reset-zoom":
+          resetTransform();
+          break;
+        case "view-toggle-sidebar":
+          sidebarVisible = !sidebarVisible;
+          break;
+        case "help-shortcuts":
+          isShortcutsModalOpen = true;
+          break;
+      }
+    });
+
     return () => {
       editor.dispose();
+      unlistenMenu.then(u => u());
     };
+  });
+
+  // Sync Monaco font size with appZoom
+  $effect(() => {
+    if (editor && appZoom) {
+      editor.updateOptions({ fontSize: 14 * appZoom });
+    }
   });
 
   // Pan logic
@@ -290,12 +362,14 @@ $ x^2 + y^2 = r^2 $
   }
 
   function zoomIn() {
-    scale = Math.min(scale * 1.2, 10);
+    appZoom = Math.min(appZoom + 0.1, 3);
   }
   function zoomOut() {
-    scale = Math.max(scale / 1.2, 0.1);
+    appZoom = Math.max(appZoom - 0.1, 0.5);
   }
   function resetTransform() {
+    appZoom = 1;
+    // Also reset preview transform just in case
     scale = 1;
     translateX = 0;
     translateY = 0;
@@ -312,6 +386,49 @@ $ x^2 + y^2 = r^2 $
       currentPage--;
     }
   }
+  function handleShortcutCommand(action: ShortcutAction) {
+    console.log("Shortcut triggered:", action);
+    switch (action) {
+      case "file.new":
+        content = DEFAULT_CONTENT;
+        currentFilePath = null;
+        if (editor) editor.setValue(content);
+        break;
+      case "file.open":
+        handleOpenFile();
+        break;
+      case "file.openFolder":
+        handleOpenFolder();
+        break;
+      case "file.save":
+        handleSave();
+        break;
+      case "file.saveAs":
+        handleSaveAs();
+        break;
+      case "view.zoomIn":
+        zoomIn();
+        break;
+      case "view.zoomOut":
+        zoomOut();
+        break;
+      case "view.resetZoom":
+        resetTransform();
+        break;
+      case "view.nextPage":
+        nextPage();
+        break;
+      case "view.prevPage":
+        prevPage();
+        break;
+      case "view.toggleSidebar":
+        sidebarVisible = !sidebarVisible;
+        break;
+      case "settings.shortcuts":
+        isShortcutsModalOpen = true;
+        break;
+    }
+  }
 </script>
 
 <svelte:window
@@ -324,17 +441,23 @@ $ x^2 + y^2 = r^2 $
 
 <div
   bind:this={container}
-  class="flex flex-col h-screen w-screen bg-[#1e1e1e] text-white overflow-hidden font-sans {isResizing
+  class="flex flex-col h-screen bg-[#1e1e1e] text-white overflow-hidden {isResizing
     ? 'cursor-col-resize select-none'
     : ''}"
+  style="zoom: {appZoom};"
 >
   <Header
-    onOpenFile={handleOpenFile}
-    onOpenFolder={handleOpenFolder}
-    onSave={handleSave}
-    onSaveAs={handleSaveAs}
+    onShowShortcuts={() => (isShortcutsModalOpen = true)}
     filePath={currentFilePath}
   />
+
+  <Modal
+    isOpen={isShortcutsModalOpen}
+    onClose={() => (isShortcutsModalOpen = false)}
+    title="Keyboard Shortcuts"
+  >
+    <ShortcutEditor />
+  </Modal>
 
   <div class="flex flex-1 w-full overflow-hidden">
     {#if sidebarVisible}
