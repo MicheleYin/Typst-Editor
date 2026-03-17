@@ -10,6 +10,9 @@
     RotateCcw,
     ChevronLeft,
     ChevronRight,
+    FilePlus,
+    FileUp,
+    FolderOpen,
   } from "lucide-svelte";
   import { open, save } from "@tauri-apps/plugin-dialog";
   import { readTextFile, writeTextFile, readDir } from "@tauri-apps/plugin-fs";
@@ -36,7 +39,12 @@ In this editor, you can write *Typst* code and see the live preview on the right
 $ x^2 + y^2 = r^2 $
 `;
 
-  let content = $state(DEFAULT_CONTENT);
+  let openFiles = $state<{ path: string; name: string; content: string }[]>([]);
+  let currentFilePath = $state<string | null>(null);
+  let currentFolder = $state<string | null>(null);
+  let isLandingPage = $derived(openFiles.length === 0 && !currentFilePath && !currentFolder);
+
+  let content = $state("");
   let pages = $state<string[]>([]);
   let pageCount = $state(0);
   let currentPage = $state(0);
@@ -44,7 +52,7 @@ $ x^2 + y^2 = r^2 $
   let editorWidth = $state(50); // percentage
   let isResizing = $state(false);
   let container: HTMLDivElement;
-  let editorContainer: HTMLDivElement;
+  let editorContainer: HTMLDivElement | undefined = $state();
   let editor: monaco.editor.IStandaloneCodeEditor;
 
   // Zoom/Pan state
@@ -54,9 +62,6 @@ $ x^2 + y^2 = r^2 $
   let isPanning = $state(false);
   let startX = 0;
   let startY = 0;
-  let currentFilePath = $state<string | null>(null);
-  let openFiles = $state<{ path: string; name: string; content: string }[]>([]);
-  let currentFolder = $state<string | null>(null);
   let folderFiles = $state<{ name: string; path: string; isDirectory: boolean }[]>([]);
   let sidebarWidth = $state(260); // pixels
   let sidebarVisible = $state(true);
@@ -118,8 +123,8 @@ $ x^2 + y^2 = r^2 $
           openFileByPath(nextFile.path);
         } else {
           currentFilePath = null;
-          content = DEFAULT_CONTENT;
-          if (editor) editor.setValue(content);
+          content = "";
+          if (editor) editor.setValue("");
         }
       }
     }
@@ -257,7 +262,7 @@ $ x^2 + y^2 = r^2 $
     monaco.languages.setMonarchTokensProvider("typst", typstLanguage.language);
     monaco.languages.setLanguageConfiguration("typst", typstLanguage.conf);
 
-    editor = monaco.editor.create(editorContainer, {
+    editor = monaco.editor.create(editorContainer!, {
       value: content,
       language: "typst",
       theme: "vs-dark",
@@ -280,17 +285,6 @@ $ x^2 + y^2 = r^2 $
     } catch (e) {
       console.error("Failed to initialize shortcuts:", e);
     }
-
-    // Sync Monaco font size with appZoom
-    const syncFontSize = () => {
-      if (editor) {
-        editor.updateOptions({ fontSize: 14 * appZoom });
-      }
-    };
-    
-    // We can't use $effect inside onMount for dependencies that change outside
-    // but we can watch appZoom if we put it in a separate effect or just here if it's fine.
-    // Actually, a top-level $effect is better for state tracking.
     
     // Listen for native menu events
     const unlistenMenu = listen("menu-event", (event) => {
@@ -386,13 +380,19 @@ $ x^2 + y^2 = r^2 $
       currentPage--;
     }
   }
-  function handleShortcutCommand(action: ShortcutAction) {
+  async function handleShortcutCommand(action: ShortcutAction) {
     console.log("Shortcut triggered:", action);
     switch (action) {
       case "file.new":
-        content = DEFAULT_CONTENT;
-        currentFilePath = null;
-        if (editor) editor.setValue(content);
+        await handleSaveAs();
+        if (currentFilePath) {
+          const name = currentFilePath.split('/').pop() || "untitled.typ";
+          if (!openFiles.find(f => f.path === currentFilePath)) {
+            openFiles = [...openFiles, { path: currentFilePath, name, content: DEFAULT_CONTENT }];
+          }
+          content = DEFAULT_CONTENT;
+          if (editor) editor.setValue(content);
+        }
         break;
       case "file.open":
         handleOpenFile();
@@ -459,7 +459,60 @@ $ x^2 + y^2 = r^2 $
     <ShortcutEditor />
   </Modal>
 
-  <div class="flex flex-1 w-full overflow-hidden">
+  <div class="flex flex-1 w-full overflow-hidden relative">
+    {#if isLandingPage}
+      <div class="absolute inset-0 z-[60] flex flex-col items-center justify-center bg-[#1e1e1e] p-8">
+        <div class="max-w-md w-full text-center space-y-8 animate-in fade-in zoom-in duration-500">
+          <div class="flex flex-col items-center space-y-4">
+            <div class="w-20 h-20 bg-blue-600 rounded-2xl flex items-center justify-center shadow-2xl shadow-blue-500/20">
+              <span class="text-4xl font-bold">T</span>
+            </div>
+            <h1 class="text-3xl font-bold tracking-tight">Typst Editor</h1>
+            <p class="text-gray-400">The professional way to write and typeset documents.</p>
+          </div>
+
+          <div class="grid gap-3 pt-4">
+            <button 
+              onclick={() => handleShortcutCommand("file.new")}
+              class="flex items-center gap-3 p-4 bg-[#2d2d2d] hover:bg-[#333] border border-[#3d3d3d] rounded-xl transition-all group"
+            >
+              <FilePlus class="text-blue-500 group-hover:scale-110 transition-transform" />
+              <div class="text-left">
+                <div class="text-sm font-semibold">New File</div>
+                <div class="text-xs text-gray-500">Start with a blank document</div>
+              </div>
+            </button>
+
+            <button 
+              onclick={handleOpenFile}
+              class="flex items-center gap-3 p-4 bg-[#2d2d2d] hover:bg-[#333] border border-[#3d3d3d] rounded-xl transition-all group"
+            >
+              <FileUp class="text-purple-500 group-hover:scale-110 transition-transform" />
+              <div class="text-left">
+                <div class="text-sm font-semibold">Open File</div>
+                <div class="text-xs text-gray-500">Open an existing .typ file</div>
+              </div>
+            </button>
+
+            <button 
+              onclick={handleOpenFolder}
+              class="flex items-center gap-3 p-4 bg-[#2d2d2d] hover:bg-[#333] border border-[#3d3d3d] rounded-xl transition-all group"
+            >
+              <FolderOpen class="text-amber-500 group-hover:scale-110 transition-transform" />
+              <div class="text-left">
+                <div class="text-sm font-semibold">Open Folder</div>
+                <div class="text-xs text-gray-500">Open a workspace or project</div>
+              </div>
+            </button>
+          </div>
+
+          <div class="pt-8 text-xs text-gray-600">
+            Press <kbd class="px-1.5 py-0.5 rounded bg-[#2d2d2d] border border-[#3d3d3d] text-gray-400">Cmd</kbd> + <kbd class="px-1.5 py-0.5 rounded bg-[#2d2d2d] border border-[#3d3d3d] text-gray-400">K</kbd> <kbd class="px-1.5 py-0.5 rounded bg-[#2d2d2d] border border-[#3d3d3d] text-gray-400">S</kbd> for shortcuts
+          </div>
+        </div>
+      </div>
+    {/if}
+
     {#if sidebarVisible}
       <Sidebar 
         width={sidebarWidth} 

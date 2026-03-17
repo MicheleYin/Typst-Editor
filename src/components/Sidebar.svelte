@@ -32,7 +32,7 @@
 
 <aside 
   style:width="{width}px"
-  class="h-full bg-[#252526] flex flex-col select-none text-gray-400 overflow-hidden"
+  class="h-full bg-[#252526] flex flex-col select-none text-gray-400 overflow-hidden border-r border-[#333]/30 min-w-[160px]"
 >
   <!-- No top header to keep it simpler -->
 
