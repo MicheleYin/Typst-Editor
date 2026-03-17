@@ -11,9 +11,11 @@
     ChevronRight,
   } from "lucide-svelte";
   import { open, save } from "@tauri-apps/plugin-dialog";
-  import { readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
+  import { readTextFile, writeTextFile, readDir } from "@tauri-apps/plugin-fs";
   import * as typstLanguage from "./typst-language";
   import Header from "./components/Header.svelte";
+  import Sidebar from "./components/Sidebar.svelte";
+  import ActivityBar from "./components/ActivityBar.svelte";
 
   const DEFAULT_CONTENT = `// Welcome to the Typst Editor!
 
@@ -50,6 +52,21 @@ $ x^2 + y^2 = r^2 $
   let startX = 0;
   let startY = 0;
   let currentFilePath = $state<string | null>(null);
+  let openFiles = $state<{ path: string; name: string; content: string }[]>([]);
+  let currentFolder = $state<string | null>(null);
+  let folderFiles = $state<{ name: string; path: string; isDirectory: boolean }[]>([]);
+  let sidebarWidth = $state(260); // pixels
+  let sidebarVisible = $state(true);
+  let activeSidebarTab = $state("explorer");
+
+  function toggleSidebar(tabId: string) {
+    if (activeSidebarTab === tabId && sidebarVisible) {
+      sidebarVisible = false;
+    } else {
+      activeSidebarTab = tabId;
+      sidebarVisible = true;
+    }
+  }
 
   async function handleOpenFile() {
     try {
@@ -63,17 +80,56 @@ $ x^2 + y^2 = r^2 $
         ],
       });
       if (selected && !Array.isArray(selected)) {
-        const text = await readTextFile(selected);
-        content = text;
-        currentFilePath = selected;
-        if (editor) {
-          editor.setValue(text);
-        }
+        await openFileByPath(selected);
       }
     } catch (err) {
       error = `Error opening file: ${err}`;
     }
   }
+
+  async function openFileByPath(path: string) {
+    try {
+      const existing = openFiles.find(f => f.path === path);
+      if (existing) {
+        content = existing.content;
+        currentFilePath = path;
+        if (editor) editor.setValue(content);
+        return;
+      }
+
+      const text = await readTextFile(path);
+      const name = path.split('/').pop() || path;
+      openFiles = [...openFiles, { path, name, content: text }];
+      content = text;
+      currentFilePath = path;
+      if (editor) {
+        editor.setValue(text);
+      }
+    } catch (err) {
+      error = `Error reading file: ${err}`;
+    }
+  }
+
+  function handleCloseFile(path: string) {
+    const index = openFiles.findIndex(f => f.path === path);
+    if (index !== -1) {
+      const newFiles = [...openFiles];
+      newFiles.splice(index, 1);
+      openFiles = newFiles;
+      
+      if (currentFilePath === path) {
+        if (openFiles.length > 0) {
+          const nextFile = openFiles[Math.max(0, index - 1)];
+          openFileByPath(nextFile.path);
+        } else {
+          currentFilePath = null;
+          content = DEFAULT_CONTENT;
+          if (editor) editor.setValue(content);
+        }
+      }
+    }
+  }
+
 
   async function handleOpenFolder() {
     try {
@@ -82,14 +138,25 @@ $ x^2 + y^2 = r^2 $
         multiple: false,
       });
       if (selected) {
-        console.log("Opened folder:", selected);
-        // For now, we just log the folder selection
-        // In a future step, we might want to list files in the folder
+        currentFolder = selected;
+        const entries = await readDir(selected);
+        folderFiles = entries
+          .filter(e => !e.name?.startsWith('.'))
+          .map(e => ({
+            name: e.name || '',
+            path: `${selected}/${e.name}`,
+            isDirectory: e.isDirectory
+          }))
+          .sort((a, b) => {
+            if (a.isDirectory === b.isDirectory) return a.name.localeCompare(b.name);
+            return a.isDirectory ? -1 : 1;
+          });
       }
     } catch (err) {
       error = `Error opening folder: ${err}`;
     }
   }
+
 
   async function handleSave() {
     if (currentFilePath) {
@@ -281,6 +348,23 @@ $ x^2 + y^2 = r^2 $
   />
 
   <div class="flex flex-1 w-full overflow-hidden">
+    <ActivityBar 
+      activeTab={activeSidebarTab} 
+      onTabClick={toggleSidebar} 
+    />
+
+    {#if sidebarVisible}
+      <Sidebar 
+        width={sidebarWidth} 
+        {openFiles} 
+        activeFile={currentFilePath} 
+        {currentFolder} 
+        {folderFiles} 
+        onSelectFile={openFileByPath}
+        onCloseFile={handleCloseFile}
+      />
+    {/if}
+
     <div
       style:width="{editorWidth}%"
       class="h-full border-r border-[#333] relative"
