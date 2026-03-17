@@ -17,7 +17,7 @@
     onCloseFile 
   } = $props<{
     width: number;
-    openFiles: { path: string; name: string }[];
+    openFiles: { path: string; name: string; isDirty?: boolean; lastSaved?: Date | null }[];
     activeFile: string | null;
     currentFolder: string | null;
     folderFiles: SidebarFileItem[];
@@ -28,6 +28,21 @@
 
   let explorerOpen = $state(true);
   let openEditorsOpen = $state(true);
+
+  function formatRelativeTime(date: Date | null | undefined) {
+    if (!date) return "";
+    const now = new Date();
+    const diff = now.getTime() - date.getTime();
+    const seconds = Math.floor(diff / 1000);
+    const minutes = Math.floor(seconds / 60);
+    const hours = Math.floor(minutes / 60);
+
+    if (seconds < 10) return "just now";
+    if (seconds < 60) return `${seconds}s ago`;
+    if (minutes < 60) return `${minutes}m ago`;
+    if (hours < 24) return `${hours}h ago`;
+    return date.toLocaleDateString();
+  }
 </script>
 
 <aside 
@@ -59,9 +74,19 @@
             class="group flex items-center justify-between px-4 py-1 text-xs hover:bg-[#2a2d2e] cursor-pointer {activeFile === file.path ? 'bg-[#37373d] text-white' : ''}"
             onclick={() => onSelectFile(file.path)}
           >
-            <div class="flex items-center gap-2 overflow-hidden">
-              <FileText size={14} class={activeFile === file.path ? 'text-blue-400' : 'text-gray-500'} />
-              <span class="truncate">{file.name}</span>
+            <div class="flex items-center gap-2 overflow-hidden flex-1">
+              <div class="relative">
+                <FileText size={14} class={activeFile === file.path ? 'text-blue-400' : 'text-gray-500'} />
+                {#if file.isDirty}
+                  <div class="absolute -top-1 -right-1 w-2 h-2 bg-blue-500 rounded-full border border-[#252526]"></div>
+                {/if}
+              </div>
+              <span class="truncate flex-1">{file.name}</span>
+              {#if file.lastSaved && !file.isDirty}
+                <span class="text-[9px] text-gray-500 whitespace-nowrap opacity-60 group-hover:opacity-100 transition-opacity">
+                  {formatRelativeTime(file.lastSaved)}
+                </span>
+              {/if}
             </div>
             <button 
               type="button"

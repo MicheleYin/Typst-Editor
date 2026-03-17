@@ -1,9 +1,10 @@
 <script lang="ts">
   import { Settings } from "lucide-svelte";
 
-  let { onShowShortcuts, filePath = null } = $props<{
+  let { onShowShortcuts, filePath = null, isDirty = false } = $props<{
     onShowShortcuts: () => void;
     filePath?: string | null;
+    isDirty?: boolean;
   }>();
 
 </script>
@@ -20,9 +21,17 @@
 
   <div class="flex-1 flex items-center justify-center">
     {#if filePath}
-      <span class="text-xs text-gray-400 bg-[#2d2d2d] px-3 py-1 rounded-full border border-[#333]">
-        {filePath.split('/').pop()}
-      </span>
+      <div class="flex items-center gap-2 bg-[#2d2d2d] px-3 py-1 rounded-full border border-[#333]">
+        <span class="text-xs text-gray-400">
+          {filePath.split('/').pop()}
+        </span>
+        {#if isDirty}
+          <div class="flex items-center gap-1.5 pl-1 border-l border-[#444] ml-1">
+            <div class="w-1.5 h-1.5 bg-blue-500 rounded-full animate-pulse shadow-[0_0_8px_rgba(59,130,246,0.5)]"></div>
+            <span class="text-[10px] uppercase font-bold tracking-wider text-blue-400">Edited</span>
+          </div>
+        {/if}
+      </div>
     {/if}
   </div>
 

@@ -39,7 +39,7 @@ In this editor, you can write *Typst* code and see the live preview on the right
 $ x^2 + y^2 = r^2 $
 `;
 
-  let openFiles = $state<{ path: string; name: string; content: string }[]>([]);
+  let openFiles = $state<{ path: string; name: string; content: string; isDirty?: boolean; lastSaved?: Date | null }[]>([]);
   let currentFilePath = $state<string | null>(null);
   let currentFolder = $state<string | null>(null);
   let isLandingPage = $derived(openFiles.length === 0 && !currentFilePath && !currentFolder);
@@ -67,6 +67,10 @@ $ x^2 + y^2 = r^2 $
   let sidebarVisible = $state(true);
   let isShortcutsModalOpen = $state(false);
   let appZoom = $state(1);
+
+  let currentFileDirty = $derived(
+    openFiles.find(f => f.path === currentFilePath)?.isDirty ?? false
+  );
 
   async function handleOpenFile() {
     try {
@@ -99,7 +103,7 @@ $ x^2 + y^2 = r^2 $
 
       const text = await readTextFile(path);
       const name = path.split('/').pop() || path;
-      openFiles = [...openFiles, { path, name, content: text }];
+      openFiles = [...openFiles, { path, name, content: text, isDirty: false, lastSaved: null }];
       content = text;
       currentFilePath = path;
       if (editor) {
@@ -163,6 +167,13 @@ $ x^2 + y^2 = r^2 $
       try {
         await writeTextFile(currentFilePath, content);
         console.log("Saved to:", currentFilePath);
+        
+        // Update file status
+        openFiles = openFiles.map(f => 
+          f.path === currentFilePath 
+            ? { ...f, isDirty: false, lastSaved: new Date(), content } 
+            : f
+        );
       } catch (err) {
         error = `Error saving file: ${err}`;
       }
@@ -185,6 +196,18 @@ $ x^2 + y^2 = r^2 $
         await writeTextFile(selected, content);
         currentFilePath = selected;
         console.log("Saved as:", selected);
+        
+        // Update file status
+        const name = selected.split('/').pop() || selected;
+        if (openFiles.find(f => f.path === selected)) {
+          openFiles = openFiles.map(f => 
+            f.path === selected 
+              ? { ...f, isDirty: false, lastSaved: new Date(), content } 
+              : f
+          );
+        } else {
+          openFiles = [...openFiles, { path: selected, name, content, isDirty: false, lastSaved: new Date() }];
+        }
       }
     } catch (err) {
       error = `Error saving as: ${err}`;
@@ -273,7 +296,19 @@ $ x^2 + y^2 = r^2 $
     });
 
     editor.onDidChangeModelContent(() => {
-      content = editor.getValue();
+      const newValue = editor.getValue();
+      if (content !== newValue) {
+        content = newValue;
+        
+        // Mark as dirty
+        if (currentFilePath) {
+          openFiles = openFiles.map(f => 
+            f.path === currentFilePath 
+              ? { ...f, isDirty: true, content: newValue } 
+              : f
+          );
+        }
+      }
     });
 
     // Register shortcuts and discover Monaco actions
@@ -307,20 +342,19 @@ $ x^2 + y^2 = r^2 $
           handleSaveAs();
           break;
         case "view-zoom-in":
-          zoomIn();
-          break;
+          appZoomIn();
+        break;
         case "view-zoom-out":
-          zoomOut();
+          appZoomOut();
           break;
         case "view-reset-zoom":
-          resetTransform();
+          resetAppZoom();
           break;
         case "view-toggle-sidebar":
           sidebarVisible = !sidebarVisible;
           break;
         case "help-shortcuts":
           isShortcutsModalOpen = true;
-          break;
       }
     });
 
@@ -355,15 +389,23 @@ $ x^2 + y^2 = r^2 $
     isPanning = false;
   }
 
-  function zoomIn() {
+  function appZoomIn() {
     appZoom = Math.min(appZoom + 0.1, 3);
   }
-  function zoomOut() {
+  function appZoomOut() {
     appZoom = Math.max(appZoom - 0.1, 0.5);
   }
-  function resetTransform() {
+  function resetAppZoom() {
     appZoom = 1;
-    // Also reset preview transform just in case
+  }
+
+  function previewZoomIn() {
+    scale = Math.min(scale + 0.1, 5);
+  }
+  function previewZoomOut() {
+    scale = Math.max(scale - 0.1, 0.1);
+  }
+  function resetPreviewZoom() {
     scale = 1;
     translateX = 0;
     translateY = 0;
@@ -388,7 +430,7 @@ $ x^2 + y^2 = r^2 $
         if (currentFilePath) {
           const name = currentFilePath.split('/').pop() || "untitled.typ";
           if (!openFiles.find(f => f.path === currentFilePath)) {
-            openFiles = [...openFiles, { path: currentFilePath, name, content: DEFAULT_CONTENT }];
+            openFiles = [...openFiles, { path: currentFilePath, name, content: DEFAULT_CONTENT, isDirty: false, lastSaved: new Date() }];
           }
           content = DEFAULT_CONTENT;
           if (editor) editor.setValue(content);
@@ -407,13 +449,13 @@ $ x^2 + y^2 = r^2 $
         handleSaveAs();
         break;
       case "view.zoomIn":
-        zoomIn();
+        appZoomIn();
         break;
       case "view.zoomOut":
-        zoomOut();
+        appZoomOut();
         break;
       case "view.resetZoom":
-        resetTransform();
+        resetAppZoom();
         break;
       case "view.nextPage":
         nextPage();
@@ -446,9 +488,10 @@ $ x^2 + y^2 = r^2 $
     : ''}"
   style="zoom: {appZoom};"
 >
-  <Header
-    onShowShortcuts={() => (isShortcutsModalOpen = true)}
+  <Header 
+    onShowShortcuts={() => (isShortcutsModalOpen = true)} 
     filePath={currentFilePath}
+    isDirty={currentFileDirty}
   />
 
   <Modal
@@ -595,21 +638,21 @@ $ x^2 + y^2 = r^2 $
             </div>
 
             <button
-              onclick={zoomIn}
+              onclick={previewZoomIn}
               class="p-2 bg-white/90 hover:bg-white text-gray-800 rounded-lg shadow-lg border border-gray-200 transition-all active:scale-95 group"
               title="Zoom In"
             >
               <ZoomIn size={20} class="group-hover:text-blue-600" />
             </button>
             <button
-              onclick={zoomOut}
+              onclick={previewZoomOut}
               class="p-2 bg-white/90 hover:bg-white text-gray-800 rounded-lg shadow-lg border border-gray-200 transition-all active:scale-95 group"
               title="Zoom Out"
             >
               <ZoomOut size={20} class="group-hover:text-blue-600" />
             </button>
             <button
-              onclick={resetTransform}
+              onclick={resetPreviewZoom}
               class="p-2 bg-white/90 hover:bg-white text-gray-800 rounded-lg shadow-lg border border-gray-200 transition-all active:scale-95 group"
               title="Reset Zoom"
             >
