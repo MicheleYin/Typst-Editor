@@ -92,6 +92,7 @@ export function registerShortcut(
   handler: () => void,
   label: string,
   id: string,
+  displayKeys: string,
   category: string = "App"
 ) {
   // Add to editor
@@ -102,7 +103,7 @@ export function registerShortcut(
     id,
     label,
     keybindingSource: "Custom",
-    displayKeys: "Custom", 
+    displayKeys: formatKeys(displayKeys), 
     category
   };
 
@@ -110,4 +111,55 @@ export function registerShortcut(
     const filtered = items.filter(i => i.id !== id);
     return [...filtered, item];
   });
+}
+
+/**
+ * Parses a string like "Mod+S" or "Shift+Alt+P" into Monaco KeyCode bits
+ */
+export function parseKeybinding(keyString: string, monaco: any): number {
+  const parts = keyString.split('+');
+  let result = 0;
+  
+  for (const part of parts) {
+    if (part === 'Mod') result |= monaco.KeyMod.CtrlCmd;
+    else if (part === 'Shift') result |= monaco.KeyMod.Shift;
+    else if (part === 'Alt') result |= monaco.KeyMod.Alt;
+    else if (part === 'Meta') result |= monaco.KeyMod.WinCtrl;
+    else {
+      // Find keycode by name
+      const code = monaco.KeyCode[part];
+      if (code !== undefined) result |= code;
+      else if (part.length === 1) {
+        // Handle single characters
+        const charCode = monaco.KeyCode[`Key${part.toUpperCase()}`];
+        if (charCode !== undefined) result |= charCode;
+      }
+    }
+  }
+  return result;
+}
+
+/**
+ * Applies all shortcuts (defaults + overrides) to the editor
+ */
+export function applyShortcutsToEditor(editor: any, monaco: any, overrides: Record<string, string>) {
+  // For each override, we find the action and re-register the command
+  allShortcuts.subscribe(shortcuts => {
+    for (const [id, keyString] of Object.entries(overrides)) {
+      const shortcut = shortcuts.find(s => s.id === id);
+      if (shortcut) {
+        const keybinding = parseKeybinding(keyString, monaco);
+        // Note: This adds a NEW command, it doesn't necessarily remove the old one
+        // in Monaco Standalone, but it will win for that keybinding.
+        editor.addCommand(keybinding, () => {
+          // This is a bit tricky since we don't have the original handler here.
+          // We might need to store the handlers or trigger a global event.
+          console.log(`Triggering overridden shortcut for ${id}`);
+          // For now, we'll emit an event that App.svelte can catch
+          const event = new CustomEvent('shortcut-trigger', { detail: id });
+          window.dispatchEvent(event);
+        });
+      }
+    }
+  })();
 }

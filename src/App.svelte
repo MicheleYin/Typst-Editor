@@ -21,7 +21,7 @@
   import Sidebar from "./components/Sidebar.svelte";
   import Modal from "./components/Modal.svelte";
   import ShortcutEditor from "./components/ShortcutEditor.svelte";
-  import { registerShortcut, discoverMonacoActions, type ShortcutAction } from "./lib/shortcuts";
+  import { registerShortcut, discoverMonacoActions, shortcutOverrides, applyShortcutsToEditor, type ShortcutAction } from "./lib/shortcuts";
 
   const DEFAULT_CONTENT = `// Welcome to the Typst Editor!
 
@@ -70,6 +70,9 @@ $ x^2 + y^2 = r^2 $
 
   let currentFileDirty = $derived(
     openFiles.find(f => f.path === currentFilePath)?.isDirty ?? false
+  );
+  let currentFileLastSaved = $derived(
+    openFiles.find(f => f.path === currentFilePath)?.lastSaved ?? null
   );
 
   async function handleOpenFile() {
@@ -315,8 +318,24 @@ $ x^2 + y^2 = r^2 $
     try {
       discoverMonacoActions(editor);
 
-      registerShortcut(editor, monaco, monaco.KeyCode.RightArrow, nextPage, "Next Page", "view.nextPage");
-      registerShortcut(editor, monaco, monaco.KeyCode.LeftArrow, prevPage, "Previous Page", "view.prevPage");
+      // File
+      registerShortcut(editor, monaco, monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyN, () => handleShortcutCommand("file.new"), "New File", "file.new", "Mod+N", "File");
+      registerShortcut(editor, monaco, monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyO, handleOpenFile, "Open File", "file.open", "Mod+O", "File");
+      registerShortcut(editor, monaco, monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyO, handleOpenFolder, "Open Folder", "file.openFolder", "Mod+Shift+O", "File");
+      registerShortcut(editor, monaco, monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, handleSave, "Save File", "file.save", "Mod+S", "File");
+      registerShortcut(editor, monaco, monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyS, handleSaveAs, "Save As", "file.saveAs", "Mod+Shift+S", "File");
+
+      // View
+      registerShortcut(editor, monaco, monaco.KeyMod.CtrlCmd | monaco.KeyCode.Equal, appZoomIn, "Zoom In", "view.zoomIn", "Mod+=", "View");
+      registerShortcut(editor, monaco, monaco.KeyMod.CtrlCmd | monaco.KeyCode.Minus, appZoomOut, "Zoom Out", "view.zoomOut", "Mod+-", "View");
+      registerShortcut(editor, monaco, monaco.KeyMod.CtrlCmd | monaco.KeyCode.Digit0, resetAppZoom, "Reset Zoom", "view.resetZoom", "Mod+0", "View");
+      registerShortcut(editor, monaco, monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyB, () => { sidebarVisible = !sidebarVisible; }, "Toggle Sidebar", "view.toggleSidebar", "Mod+B", "View");
+      registerShortcut(editor, monaco, monaco.KeyCode.RightArrow, nextPage, "Next Page", "view.nextPage", "Right", "View");
+      registerShortcut(editor, monaco, monaco.KeyCode.LeftArrow, prevPage, "Previous Page", "view.prevPage", "Left", "View");
+
+      // Settings
+      registerShortcut(editor, monaco, monaco.KeyMod.CtrlCmd | monaco.KeyCode.Comma, () => { isShortcutsModalOpen = true; }, "Keyboard Shortcuts", "settings.shortcuts", "Mod+,", "Settings");
+
     } catch (e) {
       console.error("Failed to initialize shortcuts:", e);
     }
@@ -471,6 +490,23 @@ $ x^2 + y^2 = r^2 $
         break;
     }
   }
+
+  // Handle overridden shortcuts from the manager
+  onMount(() => {
+    const handleShortcutTrigger = (e: any) => {
+      const id = e.detail;
+      handleShortcutCommand(id);
+    };
+    window.addEventListener('shortcut-trigger', handleShortcutTrigger);
+    return () => window.removeEventListener('shortcut-trigger', handleShortcutTrigger);
+  });
+
+  // Apply overrides when they change
+  $effect(() => {
+    if (editor && monaco && $shortcutOverrides) {
+      applyShortcutsToEditor(editor, monaco, $shortcutOverrides);
+    }
+  });
 </script>
 
 <svelte:window
@@ -492,6 +528,7 @@ $ x^2 + y^2 = r^2 $
     onShowShortcuts={() => (isShortcutsModalOpen = true)} 
     filePath={currentFilePath}
     isDirty={currentFileDirty}
+    lastSaved={currentFileLastSaved}
   />
 
   <Modal

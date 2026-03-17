@@ -1,11 +1,25 @@
 <script lang="ts">
   import { Settings } from "lucide-svelte";
 
-  let { onShowShortcuts, filePath = null, isDirty = false } = $props<{
+  let { onShowShortcuts, filePath = null, isDirty = false, lastSaved = null } = $props<{
     onShowShortcuts: () => void;
     filePath?: string | null;
     isDirty?: boolean;
+    lastSaved?: Date | null;
   }>();
+
+  function formatRelativeTime(date: Date | null | undefined) {
+    if (!date) return "";
+    const now = new Date();
+    const diff = now.getTime() - date.getTime();
+    const seconds = Math.floor(diff / 1000);
+    const minutes = Math.floor(seconds / 60);
+
+    if (seconds < 10) return "just now";
+    if (seconds < 60) return `${seconds}s ago`;
+    if (minutes < 60) return `${minutes}m ago`;
+    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  }
 
 </script>
 
@@ -29,6 +43,11 @@
           <div class="flex items-center gap-1.5 pl-1 border-l border-[#444] ml-1">
             <div class="w-1.5 h-1.5 bg-blue-500 rounded-full animate-pulse shadow-[0_0_8px_rgba(59,130,246,0.5)]"></div>
             <span class="text-[10px] uppercase font-bold tracking-wider text-blue-400">Edited</span>
+          </div>
+        {:else if lastSaved}
+          <div class="flex items-center gap-1.5 pl-1 border-l border-[#444] ml-1">
+            <div class="w-1.5 h-1.5 bg-emerald-500 rounded-full shadow-[0_0_8px_rgba(16,185,129,0.3)]"></div>
+            <span class="text-[10px] uppercase font-bold tracking-wider text-emerald-500 opacity-80">Saved {formatRelativeTime(lastSaved)}</span>
           </div>
         {/if}
       </div>
