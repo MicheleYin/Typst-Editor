@@ -30,6 +30,8 @@
   --app-btn-ghost-hover: #414559;
   --app-input-bg: #303446;
   --app-input-fg: #c6d0f5;
+  /* Font menus, dropdown lists — synced from theme dropdown.listBackground */
+  --app-dropdown-list-bg: #737994;
   --app-chip-bg: #292c3c;
   --app-chip-divider: #626880;
   --app-grip: #51576d;

@@ -34,6 +34,7 @@
     MONACO_THEME_ID_LIGHT,
     MONACO_THEME_ID_DARK,
   } from "./lib/catppuccinAltThemes";
+  import { listTypstFontFaces, type TypstFontFace } from "./lib/typstFonts";
   import pkg from "../package.json";
 
   let appName = $state(pkg.name);
@@ -158,9 +159,18 @@
   let mainLayout: HTMLDivElement | undefined = $state();
   let editorPreviewRegion: HTMLDivElement | undefined = $state();
   let isShortcutsModalOpen = $state(false);
-  let settingsInitialTab = $state<"shortcuts" | "packageCache">("shortcuts");
+  let settingsInitialTab = $state<"shortcuts" | "packageCache" | "fonts">("shortcuts");
+  let typstFontFaces = $state<TypstFontFace[]>([]);
 
-  function openSettings(tab: "shortcuts" | "packageCache" = "shortcuts") {
+  async function refreshTypstFontFaces() {
+    try {
+      typstFontFaces = await listTypstFontFaces();
+    } catch {
+      typstFontFaces = [];
+    }
+  }
+
+  function openSettings(tab: "shortcuts" | "packageCache" | "fonts" = "shortcuts") {
     settingsInitialTab = tab;
     isShortcutsModalOpen = true;
   }
@@ -559,6 +569,7 @@
   }
 
   onMount(() => {
+    void refreshTypstFontFaces();
     const mq = window.matchMedia("(prefers-color-scheme: dark)");
     systemPrefersDark = mq.matches;
     const onScheme = () => {
@@ -615,6 +626,9 @@
           break;
         case "help-package-cache":
           openSettings("packageCache");
+          break;
+        case "help-fonts":
+          openSettings("fonts");
           break;
         default:
           console.log(
@@ -731,7 +745,10 @@
 
   <SettingsModal
     isOpen={isShortcutsModalOpen}
-    onClose={() => (isShortcutsModalOpen = false)}
+    onClose={() => {
+      isShortcutsModalOpen = false;
+      void refreshTypstFontFaces();
+    }}
     initialTab={settingsInitialTab}
   />
 
@@ -786,7 +803,7 @@
           ? 'min-h-0'
           : 'flex-1 min-h-0'}"
       >
-        <EditorQuickActions editor={editor} />
+        <EditorQuickActions editor={editor} typstFontFaces={typstFontFaces} />
         <div class="flex-1 min-h-0 min-w-0 flex flex-col">
           <MonacoEditorPane
             initialValue={content}

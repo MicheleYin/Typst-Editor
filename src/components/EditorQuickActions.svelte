@@ -12,22 +12,16 @@
     Braces,
     AtSign,
   } from "lucide-svelte";
+  import FontSelectTypst from "./FontSelectTypst.svelte";
+  import type { TypstFontFace } from "../lib/typstFonts";
 
-  let { editor = undefined } = $props<{
+  let {
+    editor = undefined,
+    typstFontFaces = [],
+  } = $props<{
     editor: monaco.editor.IStandaloneCodeEditor | undefined;
+    typstFontFaces?: TypstFontFace[];
   }>();
-
-  const FONT_PRESETS: { label: string; font: string }[] = [
-    { label: "Font…", font: "" },
-    { label: "New Computer Modern", font: "New Computer Modern" },
-    { label: "Linux Libertine", font: "Linux Libertine" },
-    { label: "DejaVu Sans", font: "DejaVu Sans" },
-    { label: "DejaVu Sans Mono", font: "DejaVu Sans Mono" },
-    { label: "IBM Plex Sans", font: "IBM Plex Sans" },
-    { label: "Source Serif 4", font: "Source Serif 4" },
-  ];
-
-  let fontSelectValue = $state("");
 
   function withEditor(fn: (ed: monaco.editor.IStandaloneCodeEditor) => void) {
     const ed = editor;
@@ -141,13 +135,11 @@
     });
   }
 
-  function onFontChange() {
-    const preset = FONT_PRESETS.find((f) => f.font === fontSelectValue);
-    if (!preset?.font) return;
+  function onFontPick(typstFont: string) {
     withEditor((ed) => {
-      insertAtCursor(ed, `#set text(font: "${preset.font}")\n`);
+      const escaped = typstFont.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+      insertAtCursor(ed, `#set text(font: "${escaped}")\n`);
     });
-    fontSelectValue = "";
   }
 
   const BT = "`";
@@ -166,17 +158,7 @@
   role="toolbar"
   aria-label="Typst quick actions"
 >
-  <select
-    class="h-7 max-w-[140px] rounded-md border border-[var(--app-border)] bg-[var(--app-input-bg)] text-[var(--app-input-fg)] text-xs px-1.5 focus:outline-none focus:ring-1 focus:ring-[var(--app-link)] disabled:opacity-40"
-    bind:value={fontSelectValue}
-    onchange={onFontChange}
-    disabled={!editor}
-    title="Insert font (#set text)"
-  >
-    {#each FONT_PRESETS as f}
-      <option value={f.font}>{f.label}</option>
-    {/each}
-  </select>
+  <FontSelectTypst faces={typstFontFaces} disabled={!editor} onPick={onFontPick} />
 
   <span class="w-px h-5 bg-[var(--app-border)] mx-0.5 shrink-0" aria-hidden="true"></span>
 

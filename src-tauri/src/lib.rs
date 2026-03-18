@@ -21,6 +21,124 @@ use typst_kit::package::PackageStorage;
 /// Subfolder under the app cache directory (sandbox-safe on App Store).
 const TYPST_PACKAGES_CACHE_DIR: &str = "typst-packages";
 
+const FONT_CONFIG_FILE: &str = "typst-editor-fonts.json";
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct TypstFontConfig {
+    /// Folders scanned recursively for `.ttf`, `.otf`, `.ttc`, `.otc`.
+    #[serde(default)]
+    directories: Vec<String>,
+    /// Individual font files to load.
+    #[serde(default)]
+    files: Vec<String>,
+}
+
+fn font_config_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .app_config_dir()
+        .map(|p| p.join(FONT_CONFIG_FILE))
+        .map_err(|e| e.to_string())
+}
+
+fn load_typst_font_config(app: &tauri::AppHandle) -> TypstFontConfig {
+    let Ok(path) = font_config_path(app) else {
+        return TypstFontConfig::default();
+    };
+    let Ok(s) = fs::read_to_string(&path) else {
+        return TypstFontConfig::default();
+    };
+    serde_json::from_str(&s).unwrap_or_default()
+}
+
+fn save_typst_font_config(app: &tauri::AppHandle, c: &TypstFontConfig) -> Result<(), String> {
+    let path = font_config_path(app)?;
+    if let Some(dir) = path.parent() {
+        fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    }
+    fs::write(
+        &path,
+        serde_json::to_string_pretty(c).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())
+}
+
+fn is_font_extension(p: &Path) -> bool {
+    p.extension()
+        .and_then(|e| e.to_str())
+        .map(|e| matches!(e.to_ascii_lowercase().as_str(), "ttf" | "otf" | "ttc" | "otc"))
+        .unwrap_or(false)
+}
+
+fn walk_font_files(dir: &Path, out: &mut Vec<PathBuf>) {
+    let Ok(rd) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in rd.flatten() {
+        let p = entry.path();
+        if p.is_dir() {
+            walk_font_files(&p, out);
+        } else if is_font_extension(&p) {
+            out.push(p);
+        }
+    }
+}
+
+/// Bundled fonts from `typst-assets` (New Computer Modern, etc.).
+fn bundled_font_faces() -> Vec<Font> {
+    typst_assets::fonts()
+        .filter_map(|data| Font::new(Bytes::new(data.to_vec()), 0))
+        .collect()
+}
+
+/// Load every face from font files on disk.
+fn fonts_from_paths(paths: &[PathBuf]) -> Vec<(PathBuf, Font)> {
+    let mut v = Vec::new();
+    for path in paths {
+        let Ok(bytes) = fs::read(path) else {
+            eprintln!("typst-editor: could not read font {:?}", path);
+            continue;
+        };
+        for font in Font::iter(Bytes::new(bytes)) {
+            v.push((path.clone(), font));
+        }
+    }
+    v
+}
+
+fn collect_user_font_paths(config: &TypstFontConfig) -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    for d in &config.directories {
+        let p = PathBuf::from(d);
+        if p.is_dir() {
+            walk_font_files(&p, &mut paths);
+        }
+    }
+    for f in &config.files {
+        let p = PathBuf::from(f);
+        if p.is_file() && is_font_extension(&p) {
+            paths.push(p);
+        }
+    }
+    paths.sort();
+    paths.dedup();
+    paths
+}
+
+/// All font faces: bundled first, then user files.
+fn all_world_fonts(app: &tauri::AppHandle) -> Vec<Font> {
+    let config = load_typst_font_config(app);
+    let disk_paths = collect_user_font_paths(&config);
+    let user = fonts_from_paths(&disk_paths);
+    let n_user = user.len();
+    let bundled = bundled_font_faces();
+    let n_bundled = bundled.len();
+    let mut fonts: Vec<Font> = bundled;
+    fonts.extend(user.into_iter().map(|(_, f)| f));
+    eprintln!("typst-editor: {n_bundled} bundled + {n_user} user font faces");
+    fonts
+}
+
 fn typst_package_cache_root(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     app.path()
         .app_cache_dir()
@@ -108,11 +226,7 @@ struct EditorWorld {
 }
 
 impl EditorWorld {
-    fn new(content: String, main_path: Option<String>, package_cache: PathBuf) -> Self {
-        let fonts: Vec<Font> = typst_assets::fonts()
-            .map(|data| Font::new(Bytes::new(data.to_vec()), 0).expect("failed to load font"))
-            .collect();
-        println!("Loaded {} fonts", fonts.len());
+    fn new(content: String, main_path: Option<String>, package_cache: PathBuf, fonts: Vec<Font>) -> Self {
 
         let (main_source, project_root) = match main_path {
             Some(ref p) if !p.is_empty() => {
@@ -302,7 +416,8 @@ fn diagnostic_to_json(world: &EditorWorld, d: &SourceDiagnostic) -> CompileDiagn
 #[command]
 fn compile_typst(app: tauri::AppHandle, content: String, main_path: Option<String>) -> CompileResponse {
     let package_cache = ensure_typst_package_cache(&app);
-    let world = EditorWorld::new(content, main_path, package_cache);
+    let fonts = all_world_fonts(&app);
+    let world = EditorWorld::new(content, main_path, package_cache, fonts);
     let warned = typst::compile::<PagedDocument>(&world);
     match warned.output {
         Ok(document) => {
@@ -343,7 +458,8 @@ fn export_typst_pdf(
     output_path: String,
 ) -> Result<(), String> {
     let package_cache = ensure_typst_package_cache(&app);
-    let world = EditorWorld::new(content, main_path, package_cache);
+    let fonts = all_world_fonts(&app);
+    let world = EditorWorld::new(content, main_path, package_cache, fonts);
     let warned = typst::compile::<PagedDocument>(&world);
     let document = match warned.output {
         Ok(doc) => doc,
@@ -375,6 +491,71 @@ fn export_typst_pdf(
     }
     fs::write(&out, bytes).map_err(|e| e.to_string())?;
     Ok(())
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TypstFontFaceJson {
+    family: String,
+    variant: String,
+    source_path: Option<String>,
+    bundled: bool,
+}
+
+#[command]
+fn list_typst_font_faces(app: tauri::AppHandle) -> Result<Vec<TypstFontFaceJson>, String> {
+    let config = load_typst_font_config(&app);
+    let disk_paths = collect_user_font_paths(&config);
+    let user_pairs = fonts_from_paths(&disk_paths);
+    let mut out: Vec<TypstFontFaceJson> = Vec::new();
+    for f in bundled_font_faces() {
+        let info = f.info();
+        out.push(TypstFontFaceJson {
+            family: info.family.as_str().to_string(),
+            variant: format!("{:?}", info.variant),
+            source_path: None,
+            bundled: true,
+        });
+    }
+    for (path, f) in user_pairs {
+        let info = f.info();
+        out.push(TypstFontFaceJson {
+            family: info.family.as_str().to_string(),
+            variant: format!("{:?}", info.variant),
+            source_path: Some(path.to_string_lossy().into_owned()),
+            bundled: false,
+        });
+    }
+    Ok(out)
+}
+
+#[command]
+fn get_typst_font_config(app: tauri::AppHandle) -> Result<TypstFontConfig, String> {
+    Ok(load_typst_font_config(&app))
+}
+
+#[command]
+fn set_typst_font_config(app: tauri::AppHandle, config: TypstFontConfig) -> Result<(), String> {
+    save_typst_font_config(&app, &config)
+}
+
+#[command]
+fn import_typst_font_config_json(app: tauri::AppHandle, json_path: String) -> Result<TypstFontConfig, String> {
+    let s = fs::read_to_string(&json_path).map_err(|e| e.to_string())?;
+    let imported: TypstFontConfig = serde_json::from_str(&s).map_err(|e| e.to_string())?;
+    let mut cur = load_typst_font_config(&app);
+    for d in imported.directories {
+        if !cur.directories.contains(&d) {
+            cur.directories.push(d);
+        }
+    }
+    for f in imported.files {
+        if !cur.files.contains(&f) {
+            cur.files.push(f);
+        }
+    }
+    save_typst_font_config(&app, &cur)?;
+    Ok(cur)
 }
 
 /// Linked Typst compiler version from Cargo.lock (see `build.rs`).
@@ -454,12 +635,14 @@ pub fn run() {
 
             // Help Menu
             let pkg_cache = MenuItem::with_id(handle, "help-package-cache", "Package Cache…", true, None::<&str>)?;
+            let help_fonts = MenuItem::with_id(handle, "help-fonts", "Fonts…", true, None::<&str>)?;
             let shortcuts = MenuItem::with_id(handle, "help-shortcuts", "Keyboard Shortcuts", true, Some("CmdOrCtrl+K CmdOrCtrl+S"))?;
             let help_menu = Submenu::with_items(
                 handle,
                 "Help",
                 true,
                 &[
+                    &help_fonts,
                     &pkg_cache,
                     &shortcuts,
                     &PredefinedMenuItem::separator(handle)?,
@@ -512,7 +695,11 @@ pub fn run() {
             export_typst_pdf,
             typst_engine_version,
             get_typst_package_cache_info,
-            clear_typst_package_cache
+            clear_typst_package_cache,
+            list_typst_font_faces,
+            get_typst_font_config,
+            set_typst_font_config,
+            import_typst_font_config_json,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -1,0 +1,9 @@
+{
+  "directories": [
+    "/path/to/a/folder/of/fonts"
+  ],
+  "files": [
+    "/path/to/OneFont.ttf",
+    "/path/to/Another.otf"
+  ]
+}

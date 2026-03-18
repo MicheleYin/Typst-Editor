@@ -66,6 +66,12 @@ export function applyAppChromeFromVscodeColors(c: Record<string, string>): void 
   }
   const chip = pick(c, ["breadcrumb.background", "dropdown.background"], surface);
   const inputBg = pick(c, ["input.background", "dropdown.background"], surfaceElev);
+  /** Menu / font-picker list rows — from theme `dropdown.listBackground`. */
+  const dropdownListBg = pick(
+    c,
+    ["dropdown.listBackground"],
+    surfaceElev,
+  );
   const link = pick(
     c,
     ["activityBar.foreground", "button.background", "textLink.foreground"],
@@ -89,6 +95,7 @@ export function applyAppChromeFromVscodeColors(c: Record<string, string>): void 
   el.style.setProperty("--app-fg-subtle", fgMuted);
   el.style.setProperty("--app-border-strong", pick(c, ["focusBorder"], border));
   el.style.setProperty("--app-input-bg", inputBg);
+  el.style.setProperty("--app-dropdown-list-bg", dropdownListBg);
   el.style.setProperty("--app-input-fg", pick(c, ["input.foreground"], fg));
   el.style.setProperty("--app-chip-bg", chip);
   el.style.setProperty("--app-chip-divider", border);
