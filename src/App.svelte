@@ -15,10 +15,16 @@
   import Header from "./components/Header.svelte";
   import Sidebar from "./components/Sidebar.svelte";
   import SettingsModal from "./components/SettingsModal.svelte";
-  import InitialPage from "./components/InitialPage.svelte";
   import IosProjectHub from "./components/IosProjectHub.svelte";
-  import SvgPreview from "./components/SvgPreview.svelte";
+  import FilePreviewPane from "./components/FilePreviewPane.svelte";
   import MonacoEditorPane from "./components/MonacoEditorPane.svelte";
+  import {
+    monacoLanguageIdFromPath,
+    isBinaryAssetPath,
+    isPdfPath,
+    isTypstPath,
+    isSvgSourcePath,
+  } from "./lib/editorLanguage";
   import EditorQuickActions from "./components/EditorQuickActions.svelte";
   import {
     syncAppShortcuts,
@@ -46,28 +52,48 @@
     iosDeleteProject,
     iosImportTypIntoProject,
     iosTouchProjectUpdated,
+    projectFolderNameFromTitle,
     type IosProjectSummary,
   } from "./lib/iosProjects";
+  import {
+    desktopReadTextFile,
+    desktopWriteTextFile,
+    desktopReadDir,
+    desktopRecentRemove,
+    desktopRecentProjectsList,
+    desktopCreateProject,
+    desktopUpdateProjectMetaTitle,
+    desktopProjectTouchUpdatedMeta,
+    desktopExportProjectZip,
+    desktopProjectRowForPath,
+    desktopRecentTouch,
+    desktopImportTypIntoProject,
+  } from "./lib/desktopProjectFs";
   import pkg from "../package.json";
 
   let appName = $state(pkg.name);
 
-  let openFiles = $state<{ path: string; name: string; content: string; isDirty?: boolean; lastSaved?: Date | null }[]>([]);
+  type OpenEditorTab = {
+    path: string;
+    name: string;
+    content: string;
+    isDirty?: boolean;
+    lastSaved?: Date | null;
+    isBinary?: boolean;
+    assetUrl?: string;
+    assetKind?: "image" | "pdf";
+  };
+  let openFiles = $state<OpenEditorTab[]>([]);
   let currentFilePath = $state<string | null>(null);
   let currentFolder = $state<string | null>(null);
-  let fileUiMode = $state<"desktop" | "ios-projects">("desktop");
   let iosProjectsList = $state<IosProjectSummary[]>([]);
-  /** Active iOS project folder (absolute path); null on project picker hub */
+  /** `true` on iOS (ZIP import only); `false` on desktop (folder picker works). */
+  let projectsUseDocumentDir = $state(true);
+  /** Active project folder (absolute path); null on project hub */
   let iosProjectPath = $state<string | null>(null);
   let iosProjectFolderId = $state<string | null>(null);
   let iosProjectTitle = $state("");
-  let isIosProjectHub = $derived(fileUiMode === "ios-projects" && !iosProjectPath);
-  let isLandingPage = $derived(
-    fileUiMode === "desktop" &&
-      openFiles.length === 0 &&
-      !currentFilePath &&
-      !currentFolder,
-  );
+  let isProjectHub = $derived(!iosProjectPath);
 
   let content = $state("");
   let pages = $state<string[]>([]);
@@ -81,8 +107,21 @@
   let saveAsDocsRoot = $state<string | null>(null);
   let saveAsIntent = $state<"saveAs" | "newFile">("saveAs");
 
-  /** Write via Document base dir when path is under app Documents (more reliable on iOS). */
+  function touchProjectMetaUpdated() {
+    if (!iosProjectPath) return;
+    if (projectsUseDocumentDir) {
+      if (iosProjectFolderId) void iosTouchProjectUpdated(iosProjectFolderId);
+    } else {
+      void desktopProjectTouchUpdatedMeta(iosProjectPath);
+    }
+  }
+
+  /** Write: iOS sandbox via plugin-fs; desktop project folders via Rust. */
   async function writeFileAtPath(absPath: string, data: string): Promise<void> {
+    if (!projectsUseDocumentDir) {
+      await desktopWriteTextFile(absPath, data);
+      return;
+    }
     const root = await invoke<string | null>("workspace_documents_dir");
     if (root) {
       const normRoot = root.replace(/\/$/, "");
@@ -91,7 +130,10 @@
         const rel =
           normPath === normRoot ? "" : normPath.slice(normRoot.length + 1);
         if (rel && !rel.startsWith("..") && !rel.includes("/../")) {
-          await writeTextFile(rel, data, { baseDir: BaseDirectory.Document });
+          const useDoc = await invoke<boolean>("workspace_projects_use_document_dir");
+          await writeTextFile(rel, data, {
+            baseDir: useDoc ? BaseDirectory.Document : BaseDirectory.AppLocalData,
+          });
           return;
         }
       }
@@ -101,7 +143,7 @@
 
   /** Persist the active editor to disk (iOS project mode) before switching files or leaving. */
   async function iosFlushCurrentEditor(): Promise<void> {
-    if (fileUiMode !== "ios-projects" || !iosProjectPath) return;
+    if (!iosProjectPath) return;
     const path = currentFilePath;
     if (!path || !path.startsWith(iosProjectPath)) return;
     const text = content;
@@ -112,7 +154,7 @@
           ? { ...f, content: text, isDirty: false, lastSaved: new Date() }
           : f,
       );
-      if (iosProjectFolderId) void iosTouchProjectUpdated(iosProjectFolderId);
+      touchProjectMetaUpdated();
     } catch (e) {
       console.error("iosFlushCurrentEditor:", e);
     }
@@ -141,7 +183,9 @@
     ) {
       await iosFlushCurrentEditor();
       try {
-        const entries = await readDir(iosProjectPath);
+        const entries = projectsUseDocumentDir
+          ? await readDir(iosProjectPath)
+          : await desktopReadDir(iosProjectPath);
         const nameSet = new Set(
           entries.map((e) => e.name).filter(Boolean) as string[],
         );
@@ -185,7 +229,7 @@
         currentFilePath = selected;
         content = initial;
         editor?.setValue(initial);
-        if (iosProjectFolderId) void iosTouchProjectUpdated(iosProjectFolderId);
+        touchProjectMetaUpdated();
       } catch (e) {
         error = `Error creating file: ${e}`;
       }
@@ -232,7 +276,7 @@
       content = defaultNewFileContent(appName);
       editor?.setValue(content);
       if (currentFolder) void loadFolderFiles(currentFolder);
-      if (iosProjectFolderId) void iosTouchProjectUpdated(iosProjectFolderId);
+      touchProjectMetaUpdated();
     } else {
       currentFilePath = selected;
       const name = base;
@@ -249,7 +293,7 @@
         ];
       }
       if (currentFolder) void loadFolderFiles(currentFolder);
-      if (iosProjectFolderId) void iosTouchProjectUpdated(iosProjectFolderId);
+      touchProjectMetaUpdated();
     }
   }
 
@@ -402,38 +446,72 @@
   }
   let appZoom = $state(1);
 
-  let currentFileDirty = $derived(
-    openFiles.find((f) => f.path === currentFilePath)?.isDirty ?? false,
+  let currentTab = $derived(
+    currentFilePath ? openFiles.find((f) => f.path === currentFilePath) : undefined,
   );
-  let currentFileLastSaved = $derived(
-    openFiles.find((f) => f.path === currentFilePath)?.lastSaved ?? null,
-  );
+  let editorLanguageId = $derived(monacoLanguageIdFromPath(currentFilePath ?? "untitled.typ"));
+  let isCurrentBinary = $derived(!!currentTab?.isBinary);
+
+  let currentFileDirty = $derived(currentTab?.isDirty ?? false);
+  let currentFileLastSaved = $derived(currentTab?.lastSaved ?? null);
+
+  let filePreviewMode = $derived.by(() => {
+    const path = currentFilePath;
+    const tab = currentTab;
+    if (!path) {
+      return {
+        kind: "none" as const,
+        hint: "Open a document or asset from the sidebar.",
+      };
+    }
+    if (tab?.isBinary) {
+      if (tab.assetKind === "pdf" && tab.assetUrl) {
+        return { kind: "pdf" as const, url: tab.assetUrl };
+      }
+      if (tab.assetKind === "image" && tab.assetUrl) {
+        return { kind: "image" as const, url: tab.assetUrl, label: tab.name };
+      }
+      return {
+        kind: "none" as const,
+        hint: "Could not load a preview URL for this file. Reopen the folder or use the desktop app.",
+      };
+    }
+    if (isSvgSourcePath(path)) {
+      return { kind: "svg-inline" as const, svg: content };
+    }
+    if (isTypstPath(path)) {
+      return {
+        kind: "typst" as const,
+        error,
+        pages: previewPages,
+        pageCount: previewPageCount,
+        diagnostics: compileDiagnostics,
+        stale: showingStalePreview,
+      };
+    }
+    return {
+      kind: "none" as const,
+      hint: "Live Typst preview is for .typ files. Use PNG, JPEG, WebP, GIF, SVG, or PDF for visual preview.",
+    };
+  });
 
   async function handleOpenFile() {
-    if (fileUiMode === "ios-projects" && iosProjectPath) {
+    if (iosProjectPath) {
       await message("Use Import to add .typ files to this project.", {
         title: "Open file",
         kind: "info",
       });
       return;
     }
-    try {
-      const docsRoot = await invoke<string | null>("workspace_documents_dir");
-      const selected = await open({
-        multiple: false,
-        filters: [{ name: "Typst", extensions: ["typ"] }],
-        ...(docsRoot ? { defaultPath: docsRoot } : {}),
-      });
-      if (selected && !Array.isArray(selected)) {
-        await openFileByPath(selected);
-      }
-    } catch (err) {
-      error = `Error opening file: ${err}`;
-    }
+    await message("Open a project from the home screen, or create a new one.", {
+      title: "Projects",
+      kind: "info",
+    });
   }
 
   async function iosHandleImportTyp() {
-    if (!iosProjectFolderId || !iosProjectPath) return;
+    if (!iosProjectPath) return;
+    if (projectsUseDocumentDir && !iosProjectFolderId) return;
     try {
       const selected = await open({
         multiple: true,
@@ -444,7 +522,9 @@
       for (const path of paths) {
         await iosFlushCurrentEditor();
         const base = path.split("/").pop() || "imported.typ";
-        const newPath = await iosImportTypIntoProject(iosProjectFolderId, path, base);
+        const newPath = projectsUseDocumentDir
+          ? await iosImportTypIntoProject(iosProjectFolderId!, path, base)
+          : await desktopImportTypIntoProject(iosProjectPath, path, base);
         await loadFolderFiles(iosProjectPath);
         await openFileByPath(newPath);
       }
@@ -455,18 +535,24 @@
   }
 
   async function iosHandleExportProject() {
-    if (!iosProjectFolderId) return;
+    if (!iosProjectPath) return;
     try {
-      const defaultPath = `${iosProjectFolderId}.zip`;
+      const defaultPath = projectsUseDocumentDir
+        ? `${iosProjectFolderId}.zip`
+        : `${iosProjectPath.replace(/\/+$/, "").split("/").pop() ?? "project"}.zip`;
       const path = await save({
         defaultPath,
         filters: [{ name: "ZIP archive", extensions: ["zip"] }],
       });
       if (path === null) return;
-      await invoke("export_ios_project_zip", {
-        folderId: iosProjectFolderId,
-        outputPath: path,
-      });
+      if (projectsUseDocumentDir) {
+        await invoke("export_ios_project_zip", {
+          folderId: iosProjectFolderId!,
+          outputPath: path,
+        });
+      } else {
+        await desktopExportProjectZip(iosProjectPath, path);
+      }
       await message("All project files were saved to the ZIP.", {
         title: "Export project",
         kind: "info",
@@ -482,12 +568,7 @@
 
   async function openFileByPath(path: string) {
     try {
-      if (
-        fileUiMode === "ios-projects" &&
-        iosProjectPath &&
-        currentFilePath &&
-        currentFilePath !== path
-      ) {
+      if (iosProjectPath && currentFilePath && currentFilePath !== path) {
         await iosFlushCurrentEditor();
       }
       const existing = openFiles.find((f) => f.path === path);
@@ -498,7 +579,9 @@
         return;
       }
 
-      const text = await readTextFile(path);
+      const text = projectsUseDocumentDir
+        ? await readTextFile(path)
+        : await desktopReadTextFile(path);
       const name = path.split("/").pop() || path;
       openFiles = [...openFiles, { path, name, content: text, isDirty: false, lastSaved: null }];
       content = text;
@@ -510,11 +593,7 @@
   }
 
   async function handleCloseFile(path: string) {
-    if (
-      fileUiMode === "ios-projects" &&
-      iosProjectPath &&
-      currentFilePath === path
-    ) {
+    if (iosProjectPath && currentFilePath === path) {
       await iosFlushCurrentEditor();
     }
     const index = openFiles.findIndex((f) => f.path === path);
@@ -537,7 +616,9 @@
   }
 
   async function loadFolderFiles(folderPath: string) {
-    const entries = await readDir(folderPath);
+    const entries = projectsUseDocumentDir
+      ? await readDir(folderPath)
+      : await desktopReadDir(folderPath);
     folderFiles = entries
       .filter((e) => !e.name?.startsWith("."))
       .map((e) => ({
@@ -551,40 +632,56 @@
       });
   }
 
-  async function openAppDocumentsFolder() {
-    const root = await invoke<string | null>("workspace_documents_dir");
-    if (!root) return false;
-    currentFolder = root;
-    await loadFolderFiles(root);
-    return true;
+  async function refreshIosProjects() {
+    try {
+      if (projectsUseDocumentDir) {
+        iosProjectsList = await iosListProjects();
+      } else {
+        const rows = await desktopRecentProjectsList();
+        iosProjectsList = rows.map((r) => ({
+          folderId: r.folderId,
+          title: r.title,
+          createdAt: r.createdAt,
+          updatedAt: r.updatedAt,
+          absPath: r.absPath,
+        }));
+      }
+    } catch {
+      iosProjectsList = [];
+    }
   }
 
-  async function handleOpenFolder() {
-    if (fileUiMode === "ios-projects") {
-      await message("Open a project from the home screen, or create a new one.", {
-        title: "Folders",
+  async function hubImportFolderShortcut() {
+    if (iosProjectPath) {
+      await message("Open the menu → All projects, then import from the home screen.", {
+        title: "Import project",
         kind: "info",
       });
       return;
     }
-    try {
-      if (await openAppDocumentsFolder()) return;
-      const selected = await open({ directory: true, multiple: false });
-      if (selected) {
-        currentFolder = selected;
-        await loadFolderFiles(selected);
-      }
-    } catch (err) {
-      error = `Error opening folder: ${err}`;
-    }
+    if (projectsUseDocumentDir) await runImportProjectFromZip();
+    else await runOpenDesktopProjectFolder();
   }
 
-  async function refreshIosProjects() {
-    if (fileUiMode !== "ios-projects") return;
+  async function runOpenDesktopProjectFolder() {
     try {
-      iosProjectsList = await iosListProjects();
-    } catch {
-      iosProjectsList = [];
+      const selected = await open({
+        directory: true,
+        multiple: false,
+        title: "Open project folder",
+      });
+      if (!selected || Array.isArray(selected)) return;
+      await desktopRecentTouch(selected);
+      const row = await desktopProjectRowForPath(selected);
+      await enterIosProject({
+        folderId: row.folderId,
+        title: row.title,
+        createdAt: row.createdAt,
+        updatedAt: row.updatedAt,
+        absPath: row.absPath,
+      });
+    } catch (e) {
+      await message(String(e), { title: "Open folder", kind: "error" });
     }
   }
 
@@ -596,9 +693,11 @@
     openFiles = [];
     currentFilePath = null;
     await loadFolderFiles(p.absPath);
-    const mainPath = `${p.absPath}/main.typ`;
+    const mainPath = `${p.absPath.replace(/\/+$/, "")}/main.typ`;
     try {
-      const text = await readTextFile(mainPath);
+      const text = projectsUseDocumentDir
+        ? await readTextFile(mainPath)
+        : await desktopReadTextFile(mainPath);
       openFiles = [
         {
           path: mainPath,
@@ -614,7 +713,9 @@
     } catch {
       let entries: { name?: string; isDirectory: boolean }[] = [];
       try {
-        entries = await readDir(p.absPath);
+        entries = projectsUseDocumentDir
+          ? await readDir(p.absPath)
+          : await desktopReadDir(p.absPath);
       } catch {
         /* ignore */
       }
@@ -625,6 +726,10 @@
         content = defaultNewFileContent(appName);
         editor?.setValue(content);
       }
+    }
+    if (!projectsUseDocumentDir) {
+      await desktopRecentTouch(p.absPath);
+      void refreshIosProjects();
     }
   }
 
@@ -642,13 +747,12 @@
     void refreshIosProjects();
   }
 
+  /** Desktop: close folder/tabs and show the start page (New / Open / Open folder). */
   /** @returns null on success, error message on failure */
   let iosImportFolderOpen = $state(false);
   let iosImportFolderPath = $state<string | null>(null);
   let iosImportFolderTitle = $state("");
   let iosImportFolderError = $state("");
-
-  /** Default project title from a picked .zip path (iOS has no folder picker in Tauri). */
   function humanizeImportZipBasename(absPath: string): string {
     const base = absPath.replace(/\/+$/, "").split("/").pop() || "";
     const withoutZip = base.replace(/\.zip$/i, "");
@@ -657,9 +761,8 @@
     return s.replace(/\b\w/g, (c) => c.toUpperCase());
   }
 
-  async function iosRunImportFolderPicker() {
+  async function runImportProjectFromZip() {
     try {
-      // Tauri dialog returns FolderPickerNotImplemented for directory:true on iOS/Android.
       const selected = await open({
         multiple: false,
         pickerMode: "document",
@@ -689,14 +792,12 @@
     }
     iosImportFolderError = "";
     try {
+      const title = iosImportFolderTitle.trim() || "Untitled";
       const r = await invoke<{ folderId: string; absPath: string }>(
         "import_ios_project_from_zip",
-        {
-          zipPath: path,
-          title: iosImportFolderTitle.trim() || "Untitled",
-        },
+        { zipPath: path, title },
       );
-      const t = iosImportFolderTitle.trim() || "Untitled";
+      const t = title;
       iosImportFolderOpen = false;
       iosImportFolderPath = null;
       await enterIosProject({
@@ -714,6 +815,34 @@
 
   async function iosCreateProjectFlow(title: string): Promise<string | null> {
     await refreshIosProjects();
+    if (!projectsUseDocumentDir) {
+      const parent = await open({
+        directory: true,
+        multiple: false,
+        title: "Choose where to create the project folder",
+      });
+      if (parent === null || Array.isArray(parent)) return null;
+      const folderName = projectFolderNameFromTitle(title);
+      try {
+        const row = await desktopCreateProject(
+          parent,
+          folderName,
+          title.trim() || "Untitled",
+        );
+        await desktopRecentTouch(row.absPath);
+        await refreshIosProjects();
+        await enterIosProject({
+          folderId: row.folderId,
+          title: row.title,
+          createdAt: row.createdAt,
+          updatedAt: row.updatedAt,
+          absPath: row.absPath,
+        });
+        return null;
+      } catch (e) {
+        return String(e);
+      }
+    }
     const err = await iosValidateNewProjectTitle(title, iosProjectsList);
     if (err) return err;
     try {
@@ -730,6 +859,21 @@
     folderId: string,
     title: string,
   ): Promise<string | null> {
+    if (!projectsUseDocumentDir) {
+      try {
+        const projPath =
+          iosProjectsList.find((x) => x.folderId === folderId)?.absPath ??
+          folderId;
+        await desktopUpdateProjectMetaTitle(projPath, title);
+        if (iosProjectFolderId === folderId) {
+          iosProjectTitle = title.trim() || "Untitled";
+        }
+        await refreshIosProjects();
+        return null;
+      } catch (e) {
+        return String(e);
+      }
+    }
     try {
       const rootRaw = await invoke<string | null>("workspace_documents_dir");
       const root = rootRaw?.replace(/\/$/, "");
@@ -767,6 +911,21 @@
   }
 
   async function iosOnDeleteProject(folderId: string) {
+    if (!projectsUseDocumentDir) {
+      const ok = await ask(
+        "Remove this folder from recent projects? Nothing will be deleted on disk.",
+        { title: "Remove from recents", kind: "info" },
+      );
+      if (!ok) return;
+      try {
+        await desktopRecentRemove(folderId);
+        if (iosProjectFolderId === folderId) void leaveIosProject();
+        await refreshIosProjects();
+      } catch (e) {
+        error = String(e);
+      }
+      return;
+    }
     const ok = await ask(
       "Delete this project and all files inside? This cannot be undone.",
       { title: "Delete project", kind: "warning" },
@@ -791,6 +950,9 @@
   }
 
   async function handleSave() {
+    if (currentFilePath && openFiles.find((f) => f.path === currentFilePath)?.isBinary) {
+      return;
+    }
     if (currentFilePath) {
       try {
         await writeFileAtPath(currentFilePath, content);
@@ -800,7 +962,7 @@
             : f,
         );
         error = "";
-        if (iosProjectFolderId) void iosTouchProjectUpdated(iosProjectFolderId);
+        touchProjectMetaUpdated();
       } catch (err) {
         error = `Error saving file: ${err}`;
       }
@@ -844,16 +1006,11 @@
     if (currentFilePath && content) {
       const path = currentFilePath;
       const text = content;
-      const debounceMs =
-        fileUiMode === "ios-projects" && iosProjectPath ? 500 : 1000;
+      const debounceMs = iosProjectPath ? 500 : 1000;
       const timeoutId = setTimeout(async () => {
         try {
           await writeFileAtPath(path, text);
-          if (
-            fileUiMode === "ios-projects" &&
-            iosProjectPath &&
-            path.startsWith(iosProjectPath)
-          ) {
+          if (iosProjectPath && path.startsWith(iosProjectPath)) {
             openFiles = openFiles.map((f) =>
               f.path === path
                 ? {
@@ -864,7 +1021,7 @@
                   }
                 : f,
             );
-            if (iosProjectFolderId) void iosTouchProjectUpdated(iosProjectFolderId);
+            touchProjectMetaUpdated();
           }
         } catch (err) {
           console.error("Auto-sync failed:", err);
@@ -950,8 +1107,9 @@
   }
 
   $effect(() => {
-    const text = content;
     const pathSnapshot = currentFilePath;
+    if (!pathSnapshot || !isTypstPath(pathSnapshot)) return;
+    const text = content;
     const timeoutId = setTimeout(() => {
       void compile(text, pathSnapshot);
     }, 300);
@@ -1070,6 +1228,7 @@
   }
 
   function onEditorContentChange(newValue: string) {
+    if (openFiles.find((f) => f.path === currentFilePath)?.isBinary) return;
     if (content !== newValue) {
       content = newValue;
       if (currentFilePath) {
@@ -1083,6 +1242,13 @@
   async function handleShortcutCommand(action: ShortcutAction) {
     switch (action) {
       case "file.new": {
+        if (!iosProjectPath) {
+          await message(
+            "Create or open a project from the home screen first. Then use New File to add a .typ in that project.",
+            { title: "New file", kind: "info" },
+          );
+          break;
+        }
         const mobile = await openMobileSaveAsModal("newFile");
         if (mobile) break;
         await handleSaveAs();
@@ -1109,7 +1275,7 @@
         handleOpenFile();
         break;
       case "file.openFolder":
-        handleOpenFolder();
+        void hubImportFolderShortcut();
         break;
       case "file.save":
         handleSave();
@@ -1152,7 +1318,13 @@
         void handleOpenFile();
         break;
       case "file-open-folder":
-        void handleOpenFolder();
+        void hubImportFolderShortcut();
+        break;
+      case "desktop-back-start":
+        void leaveIosProject();
+        break;
+      case "desktop-open-project-folder":
+        void runOpenDesktopProjectFolder();
         break;
       case "ios-import-typ":
         void iosHandleImportTyp();
@@ -1164,7 +1336,7 @@
         void leaveIosProject();
         break;
       case "ios-import-folder-project":
-        void iosRunImportFolderPicker();
+        void runImportProjectFromZip();
         break;
       case "file-save":
         void handleSave();
@@ -1284,32 +1456,10 @@
         /* web dev / older host: keep native assumption (no in-app menu) */
       });
 
-    void (async () => {
-      try {
-        const mode = await invoke<string>("app_file_ui_mode");
-        if (mode === "ios-projects") {
-          fileUiMode = "ios-projects";
-          await refreshIosProjects();
-          return;
-        }
-      } catch {
-        /* web dev */
-      }
-      fileUiMode = "desktop";
-      try {
-        const root = await invoke<string | null>("workspace_documents_dir");
-        if (root) {
-          currentFolder = root;
-          try {
-            await loadFolderFiles(root);
-          } catch (e) {
-            console.warn("typst-editor: could not list Documents", e);
-          }
-        }
-      } catch {
-        /* ignore */
-      }
-    })();
+    void invoke<boolean>("workspace_projects_use_document_dir").then((v) => {
+      projectsUseDocumentDir = v;
+    });
+    void refreshIosProjects();
 
     const unlistenMenu = listen("menu-event", (event) => {
       dispatchMenuId(event.payload as string);
@@ -1370,7 +1520,7 @@
     syncAppShortcuts(o, {
       "file.new": () => handleShortcutCommand("file.new"),
       "file.open": handleOpenFile,
-      "file.openFolder": handleOpenFolder,
+      "file.openFolder": () => void hubImportFolderShortcut(),
       "file.save": handleSave,
       "file.saveAs": handleSaveAs,
       "view.zoomIn": appZoomIn,
@@ -1401,9 +1551,13 @@
     {appName}
     {showInAppMenu}
     onInAppMenuAction={dispatchMenuId}
-    inAppMenuLanding={isLandingPage || isIosProjectHub}
-    iosMenuHub={isIosProjectHub}
-    iosMenuProject={fileUiMode === "ios-projects" && !!iosProjectPath}
+    inAppMenuLanding={isProjectHub}
+    hubAllowsFolderImport={false}
+    hubDirectFolders={!projectsUseDocumentDir}
+    iosMenuHub={isProjectHub}
+    iosMenuProject={!!iosProjectPath}
+    showNativeBackToHub={!showInAppMenu && !isProjectHub}
+    onBackToProjects={() => void leaveIosProject()}
     onShowShortcuts={() => openSettings("shortcuts")}
     colorMode={themePreference}
     onColorModeChange={handleThemePreferenceChange}
@@ -1411,15 +1565,15 @@
     filePath={currentFilePath}
     isDirty={currentFileDirty}
     lastSaved={currentFileLastSaved}
-    showPanelToggles={!isLandingPage && !isIosProjectHub}
+    showPanelToggles={!isProjectHub}
     {sidebarVisible}
     onToggleSidebar={() => (sidebarVisible = !sidebarVisible)}
     {previewVisible}
     onTogglePreview={() => (previewVisible = !previewVisible)}
-    showExportPdf={!isLandingPage && !isIosProjectHub}
+    showExportPdf={!isProjectHub}
     {pdfExporting}
     onExportPdf={handleExportPdf}
-    onShowCommandPalette={!isLandingPage && !isIosProjectHub
+    onShowCommandPalette={!isProjectHub
       ? () => {
           const ed = editor;
           if (!ed) return;
@@ -1522,10 +1676,9 @@
           Import project from ZIP
         </h2>
         <p class="text-xs text-[var(--app-fg-secondary)]">
-          The archive is extracted into a new project (same skips as desktop:
-          <code class="text-[10px]">.git</code>, <code class="text-[10px]">node_modules</code>, etc.).
-          If the ZIP has a single top-level folder, that wrapper is stripped. Missing
-          <code class="text-[10px]">main.typ</code> is added. Pick a unique project title.
+          The archive is extracted into a new project (.git, node_modules, etc. skipped). A single
+          top-level folder in the ZIP is stripped. Missing
+          <code class="text-[10px]">main.typ</code> is added.
         </p>
         <input
           type="text"
@@ -1567,7 +1720,7 @@
     bind:this={mainLayout}
     class="flex flex-1 w-full min-h-0 overflow-hidden relative"
   >
-    {#if isIosProjectHub}
+    {#if isProjectHub}
       <IosProjectHub
         {appName}
         projects={iosProjectsList}
@@ -1576,18 +1729,13 @@
         onCreateProject={iosCreateProjectFlow}
         onRenameProject={iosOnRenameProject}
         onDeleteProject={iosOnDeleteProject}
-        onImportFolder={() => void iosRunImportFolderPicker()}
+        onImportZip={() => void runImportProjectFromZip()}
+        onImportFolderFromDisk={undefined}
+        onOpenFolderOnDisk={projectsUseDocumentDir
+          ? undefined
+          : () => void runOpenDesktopProjectFolder()}
       />
     {:else}
-      {#if isLandingPage}
-        <InitialPage
-          {appName}
-          onNewFile={() => handleShortcutCommand("file.new")}
-          onOpenFile={handleOpenFile}
-          onOpenFolder={handleOpenFolder}
-        />
-      {/if}
-
     {#if sidebarVisible}
       <Sidebar
         width={sidebarWidth}
@@ -1635,10 +1783,27 @@
           ? 'min-h-0'
           : 'flex-1 min-h-0'}"
       >
-        <EditorQuickActions editor={editor} typstFontFaces={typstFontFaces} />
-        <div class="flex-1 min-h-0 min-w-0 flex flex-col">
+        <EditorQuickActions
+          editor={editor}
+          typstFontFaces={typstFontFaces}
+          showTypstToolbar={!isCurrentBinary && !!(currentFilePath && isTypstPath(currentFilePath))}
+        />
+        <div class="relative flex-1 min-h-0 min-w-0 flex flex-col min-w-0">
+          {#if isCurrentBinary}
+            <div
+              class="absolute inset-0 z-20 flex flex-col items-center justify-center gap-1 px-6 text-center bg-[var(--app-bg)] border-b border-[var(--app-border)]"
+              role="status"
+            >
+              <span class="text-sm font-medium text-[var(--app-fg-secondary)]">Preview-only file</span>
+              <span class="text-xs text-[var(--app-fg-muted)] max-w-xs"
+                >Image or PDF — use the panel on the right. This file is not edited as text here.</span
+              >
+            </div>
+          {/if}
           <MonacoEditorPane
             initialValue={content}
+            languageId={editorLanguageId}
+            readOnly={isCurrentBinary}
             {appZoom}
             monacoTheme={monacoThemeResolved}
             onContentChange={onEditorContentChange}
@@ -1676,13 +1841,9 @@
         </div>
 
         <div class="h-full flex flex-col min-w-0 min-h-0 overflow-hidden">
-          <SvgPreview
-            {error}
-            pages={previewPages}
+          <FilePreviewPane
+            mode={filePreviewMode}
             bind:currentPage
-            pageCount={previewPageCount}
-            diagnostics={compileDiagnostics}
-            stalePreview={showingStalePreview}
             bind:scale
             bind:translateX
             bind:translateY

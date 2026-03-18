@@ -864,39 +864,40 @@ fn app_has_native_menu() -> bool {
     cfg!(desktop)
 }
 
-/// iOS uses a project-based file UI; everything else uses desktop open/save/folder.
+/// All platforms use the project hub + per-project editor (like iOS).
 #[command]
 fn app_file_ui_mode() -> &'static str {
+    "projects"
+}
+
+/// `true` on iOS (sandbox Documents); `false` on desktop (app local data).
+#[command]
+fn workspace_projects_use_document_dir() -> bool {
+    cfg!(target_os = "ios")
+}
+
+fn projects_data_root(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     #[cfg(target_os = "ios")]
     {
-        "ios-projects"
+        let p = app.path().document_dir().map_err(|e| e.to_string())?;
+        fs::create_dir_all(&p).map_err(|e| e.to_string())?;
+        Ok(p)
     }
     #[cfg(not(target_os = "ios"))]
     {
-        "desktop"
+        let p = app.path().app_local_data_dir().map_err(|e| e.to_string())?;
+        fs::create_dir_all(&p).map_err(|e| e.to_string())?;
+        Ok(p)
     }
 }
 
-/// On iOS, the app sandbox Documents directory (Files app → On My iPhone → app).
-/// Ensures the directory exists. Returns `None` on other platforms.
+/// Parent directory for `Projects/<name>/` (iOS: Documents; desktop: app support).
 #[command]
 fn workspace_documents_dir(app: tauri::AppHandle) -> Result<Option<String>, String> {
-    #[cfg(target_os = "ios")]
-    {
-        let p = app
-            .path()
-            .document_dir()
-            .map_err(|e| e.to_string())?;
-        fs::create_dir_all(&p).map_err(|e| e.to_string())?;
-        Ok(Some(p.to_string_lossy().into_owned()))
-    }
-    #[cfg(not(target_os = "ios"))]
-    {
-        Ok(None)
-    }
+    let p = projects_data_root(&app)?;
+    Ok(Some(p.to_string_lossy().into_owned()))
 }
 
-#[cfg(target_os = "ios")]
 fn validate_ios_project_folder_id(id: &str) -> Result<(), String> {
     if id.is_empty() || id.len() > 200 {
         return Err("Invalid project folder.".into());
@@ -907,7 +908,6 @@ fn validate_ios_project_folder_id(id: &str) -> Result<(), String> {
     Ok(())
 }
 
-#[cfg(target_os = "ios")]
 fn zip_project_directory(project_dir: &Path, output_path: &Path) -> Result<(), String> {
     let out_file = fs::File::create(output_path).map_err(|e| e.to_string())?;
     let mut zip = zip::ZipWriter::new(out_file);
@@ -955,39 +955,27 @@ fn zip_project_directory(project_dir: &Path, output_path: &Path) -> Result<(), S
     Ok(())
 }
 
-/// Zip all files under `Documents/Projects/<folderId>/` (iOS only).
+/// Zip all files under `Projects/<folderId>/`.
 #[command]
 fn export_ios_project_zip(
     app: tauri::AppHandle,
     folder_id: String,
     output_path: String,
 ) -> Result<(), String> {
-    #[cfg(target_os = "ios")]
-    {
-        validate_ios_project_folder_id(&folder_id)?;
-        let doc = app
-            .path()
-            .document_dir()
-            .map_err(|e| e.to_string())?;
-        let project = doc.join("Projects").join(&folder_id);
-        if !project.is_dir() {
-            return Err("Project folder not found.".into());
-        }
-        let out = PathBuf::from(output_path.trim());
-        if out.as_os_str().is_empty() {
-            return Err("Invalid export path.".into());
-        }
-        zip_project_directory(&project, &out)
+    validate_ios_project_folder_id(&folder_id)?;
+    let root = projects_data_root(&app)?;
+    let project = root.join("Projects").join(&folder_id);
+    if !project.is_dir() {
+        return Err("Project folder not found.".into());
     }
-    #[cfg(not(target_os = "ios"))]
-    {
-        let _ = (app, folder_id, output_path);
-        Err("Export project is only available in the iOS app.".into())
+    let out = PathBuf::from(output_path.trim());
+    if out.as_os_str().is_empty() {
+        return Err("Invalid export path.".into());
     }
+    zip_project_directory(&project, &out)
 }
 
 /// Folder name = title with only path-forbidden characters removed (spaces & casing kept).
-#[cfg(target_os = "ios")]
 fn project_folder_name_from_title(title: &str) -> String {
     let t = title.trim();
     let s: String = t
@@ -1009,7 +997,6 @@ fn project_folder_name_from_title(title: &str) -> String {
     }
 }
 
-#[cfg(target_os = "ios")]
 fn projects_dir_has_folder_ci(
     projects: &Path,
     name_lower: &str,
@@ -1034,7 +1021,6 @@ fn projects_dir_has_folder_ci(
     false
 }
 
-#[cfg(target_os = "ios")]
 const IMPORT_SKIP_DIR_NAMES: &[&str] = &[
     ".git",
     "node_modules",
@@ -1043,7 +1029,6 @@ const IMPORT_SKIP_DIR_NAMES: &[&str] = &[
     "__pycache__",
 ];
 
-#[cfg(target_os = "ios")]
 fn copy_ios_import_tree(src: &Path, dst_base: &Path, src_root: &Path) -> Result<(), String> {
     for entry in fs::read_dir(src).map_err(|e| e.to_string())? {
         let entry = entry.map_err(|e| e.to_string())?;
@@ -1069,7 +1054,6 @@ fn copy_ios_import_tree(src: &Path, dst_base: &Path, src_root: &Path) -> Result<
     Ok(())
 }
 
-#[cfg(target_os = "ios")]
 fn ios_import_project_conflicts(
     doc: &Path,
     folder_name: &str,
@@ -1104,18 +1088,17 @@ fn ios_import_project_conflicts(
     Ok(None)
 }
 
-/// iOS document picker returns `file:///...` URLs; Rust must map them to paths before `open()`.
-#[cfg(target_os = "ios")]
-fn ios_path_from_document_picker(raw: &str) -> Result<PathBuf, String> {
+/// Map dialog / picker path to a filesystem path (`file://` on iOS; plain paths on desktop).
+fn path_from_user_pick(raw: &str) -> Result<PathBuf, String> {
     let raw = raw.trim();
     if raw.is_empty() {
         return Err("Empty path.".into());
     }
     let path = if raw.starts_with("file:") {
         let url = url::Url::parse(raw).map_err(|e| format!("Invalid file URL: {e}"))?;
-        url.to_file_path().map_err(|_| {
-            String::from("Could not resolve filesystem path from picked file.")
-        })?
+        url
+            .to_file_path()
+            .map_err(|_| String::from("Could not resolve filesystem path."))?
     } else {
         PathBuf::from(raw)
     };
@@ -1126,78 +1109,66 @@ fn ios_path_from_document_picker(raw: &str) -> Result<PathBuf, String> {
     }
 }
 
-/// Copy a user-picked folder into `Documents/Projects/<folder name>/` as a new project (iOS only).
+/// Copy a user-picked folder into `Projects/<folder name>/` as a new project.
 #[command]
 fn import_ios_project_from_folder(
     app: tauri::AppHandle,
     source_path: String,
     title: String,
 ) -> Result<serde_json::Value, String> {
-    #[cfg(target_os = "ios")]
-    {
-        let raw = source_path.trim();
-        if raw.is_empty() {
-            return Err("No folder selected.".into());
-        }
-        let source = ios_path_from_document_picker(raw)?;
-        if !source.is_dir() {
-            return Err("Please choose a folder.".into());
-        }
-        let title_owned = {
-            let t = title.trim();
-            if t.is_empty() {
-                "Untitled".to_string()
-            } else {
-                t.to_string()
-            }
-        };
-        let folder_name = project_folder_name_from_title(&title_owned);
-        let doc = app
-            .path()
-            .document_dir()
-            .map_err(|e| e.to_string())?;
-        fs::create_dir_all(doc.join("Projects")).map_err(|e| e.to_string())?;
-        if let Some(msg) =
-            ios_import_project_conflicts(&doc, &folder_name, &title_owned.to_lowercase())?
-        {
-            return Err(msg);
-        }
-        let dest = doc.join("Projects").join(&folder_name);
-        fs::create_dir_all(&dest).map_err(|e| e.to_string())?;
-        let copy_result = copy_ios_import_tree(&source, &dest, &source);
-        if let Err(e) = copy_result {
-            let _ = fs::remove_dir_all(&dest);
-            return Err(format!("Copy failed: {e}"));
-        }
-        if !dest.join("main.typ").is_file() {
-            fs::write(dest.join("main.typ"), [])
-                .map_err(|e| format!("Could not add main.typ: {e}"))?;
-        }
-        let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
-        let meta = serde_json::json!({
-            "version": 1,
-            "title": title_owned,
-            "createdAt": now,
-            "updatedAt": now,
-        });
-        fs::write(
-            dest.join(".typst-editor-project.json"),
-            serde_json::to_string_pretty(&meta).map_err(|e| e.to_string())?,
-        )
-        .map_err(|e| e.to_string())?;
-        Ok(serde_json::json!({
-            "folderId": folder_name,
-            "absPath": dest.to_string_lossy(),
-        }))
+    let raw = source_path.trim();
+    if raw.is_empty() {
+        return Err("No folder selected.".into());
     }
-    #[cfg(not(target_os = "ios"))]
-    {
-        let _ = (app, source_path, title);
-        Err("Folder import is only available in the iOS app.".into())
+    let source = path_from_user_pick(raw)?;
+    if !source.is_dir() {
+        return Err("Please choose a folder.".into());
     }
+    let title_owned = {
+        let t = title.trim();
+        if t.is_empty() {
+            "Untitled".to_string()
+        } else {
+            t.to_string()
+        }
+    };
+    let folder_name = project_folder_name_from_title(&title_owned);
+    let root = projects_data_root(&app)?;
+    fs::create_dir_all(root.join("Projects")).map_err(|e| e.to_string())?;
+    if let Some(msg) =
+        ios_import_project_conflicts(&root, &folder_name, &title_owned.to_lowercase())?
+    {
+        return Err(msg);
+    }
+    let dest = root.join("Projects").join(&folder_name);
+    fs::create_dir_all(&dest).map_err(|e| e.to_string())?;
+    let copy_result = copy_ios_import_tree(&source, &dest, &source);
+    if let Err(e) = copy_result {
+        let _ = fs::remove_dir_all(&dest);
+        return Err(format!("Copy failed: {e}"));
+    }
+    if !dest.join("main.typ").is_file() {
+        fs::write(dest.join("main.typ"), [])
+            .map_err(|e| format!("Could not add main.typ: {e}"))?;
+    }
+    let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    let meta = serde_json::json!({
+        "version": 1,
+        "title": title_owned,
+        "createdAt": now,
+        "updatedAt": now,
+    });
+    fs::write(
+        dest.join(".typst-editor-project.json"),
+        serde_json::to_string_pretty(&meta).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(serde_json::json!({
+        "folderId": folder_name,
+        "absPath": dest.to_string_lossy(),
+    }))
 }
 
-#[cfg(target_os = "ios")]
 fn ios_zip_strip_prefix(names: &[String]) -> usize {
     let trimmed: Vec<&str> = names
         .iter()
@@ -1220,7 +1191,6 @@ fn ios_zip_strip_prefix(names: &[String]) -> usize {
     root.len() + 1
 }
 
-#[cfg(target_os = "ios")]
 fn ios_zip_output_path(dest: &Path, rel: &str) -> Option<PathBuf> {
     let rel = rel.replace('\\', "/");
     let rel = rel.trim_matches('/');
@@ -1238,152 +1208,135 @@ fn ios_zip_output_path(dest: &Path, rel: &str) -> Option<PathBuf> {
     Some(dest.join(rel))
 }
 
-/// Import a ZIP (e.g. from Files: long-press folder → Compress) into `Documents/Projects/<folder>/`.
-/// iOS: Tauri does not support `directory: true` folder pickers on mobile; ZIP is the supported path.
+/// Import a ZIP into `Projects/<folder>/`.
 #[command]
 fn import_ios_project_from_zip(
     app: tauri::AppHandle,
     zip_path: String,
     title: String,
 ) -> Result<serde_json::Value, String> {
-    #[cfg(target_os = "ios")]
+    use zip::ZipArchive;
+
+    let raw = zip_path.trim();
+    if raw.is_empty() {
+        return Err("No file selected.".into());
+    }
+    let zpath = path_from_user_pick(raw)?;
+    if !zpath.is_file() {
+        return Err("Please choose a .zip file.".into());
+    }
+    let title_owned = {
+        let t = title.trim();
+        if t.is_empty() {
+            "Untitled".to_string()
+        } else {
+            t.to_string()
+        }
+    };
+    let folder_name = project_folder_name_from_title(&title_owned);
+    let root = projects_data_root(&app)?;
+    fs::create_dir_all(root.join("Projects")).map_err(|e| e.to_string())?;
+    if let Some(msg) =
+        ios_import_project_conflicts(&root, &folder_name, &title_owned.to_lowercase())?
     {
-        use zip::ZipArchive;
+        return Err(msg);
+    }
+    let dest = root.join("Projects").join(&folder_name);
 
-        let raw = zip_path.trim();
-        if raw.is_empty() {
-            return Err("No file selected.".into());
-        }
-        let zpath = ios_path_from_document_picker(raw)?;
-        if !zpath.is_file() {
-            return Err("Please choose a .zip file.".into());
-        }
-        let title_owned = {
-            let t = title.trim();
-            if t.is_empty() {
-                "Untitled".to_string()
-            } else {
-                t.to_string()
-            }
-        };
-        let folder_name = project_folder_name_from_title(&title_owned);
-        let doc = app
-            .path()
-            .document_dir()
-            .map_err(|e| e.to_string())?;
-        fs::create_dir_all(doc.join("Projects")).map_err(|e| e.to_string())?;
-        if let Some(msg) =
-            ios_import_project_conflicts(&doc, &folder_name, &title_owned.to_lowercase())?
-        {
-            return Err(msg);
-        }
-        let dest = doc.join("Projects").join(&folder_name);
-
-        let names: Vec<String> = {
-            let file = fs::File::open(&zpath).map_err(|e| e.to_string())?;
-            let mut archive = ZipArchive::new(file).map_err(|e| format!("Invalid ZIP: {e}"))?;
-            (0..archive.len())
-                .map(|i| {
-                    archive
-                        .by_index(i)
-                        .map(|e| e.name().to_string())
-                        .map_err(|e| e.to_string())
-                })
-                .collect::<Result<_, _>>()?
-        };
-        let strip = ios_zip_strip_prefix(&names);
-
+    let names: Vec<String> = {
         let file = fs::File::open(&zpath).map_err(|e| e.to_string())?;
         let mut archive = ZipArchive::new(file).map_err(|e| format!("Invalid ZIP: {e}"))?;
-        fs::create_dir_all(&dest).map_err(|e| e.to_string())?;
+        (0..archive.len())
+            .map(|i| {
+                archive
+                    .by_index(i)
+                    .map(|e| e.name().to_string())
+                    .map_err(|e| e.to_string())
+            })
+            .collect::<Result<_, _>>()?
+    };
+    let strip = ios_zip_strip_prefix(&names);
 
-        for i in 0..archive.len() {
-            let mut entry = archive.by_index(i).map_err(|e| e.to_string())?;
-            let raw_name = entry.name().to_string();
-            let rel = if strip > 0 && raw_name.len() >= strip {
-                raw_name[strip..].to_string()
-            } else {
-                raw_name.clone()
-            };
-            let rel = rel.trim_start_matches('/').to_string();
-            let rel_trim = rel.trim_end_matches('/').to_string();
-            if rel_trim.is_empty() {
-                continue;
-            }
-            let is_dir = rel.ends_with('/') || entry.is_dir();
-            let Some(out_path) = ios_zip_output_path(&dest, &rel_trim) else {
-                continue;
-            };
-            if is_dir {
-                fs::create_dir_all(&out_path).map_err(|e| format!("Extract failed: {e}"))?;
-                continue;
-            }
-            if let Some(parent) = out_path.parent() {
-                fs::create_dir_all(parent).map_err(|e| format!("Extract failed: {e}"))?;
-            }
-            let mut out_f = fs::File::create(&out_path).map_err(|e| format!("Extract failed: {e}"))?;
-            copy(&mut entry, &mut out_f).map_err(|e| format!("Extract failed: {e}"))?;
-        }
+    let file = fs::File::open(&zpath).map_err(|e| e.to_string())?;
+    let mut archive = ZipArchive::new(file).map_err(|e| format!("Invalid ZIP: {e}"))?;
+    fs::create_dir_all(&dest).map_err(|e| e.to_string())?;
 
-        if !dest.join("main.typ").is_file() {
-            fs::write(dest.join("main.typ"), [])
-                .map_err(|e| format!("Could not add main.typ: {e}"))?;
+    for i in 0..archive.len() {
+        let mut entry = archive.by_index(i).map_err(|e| e.to_string())?;
+        let raw_name = entry.name().to_string();
+        let rel = if strip > 0 && raw_name.len() >= strip {
+            raw_name[strip..].to_string()
+        } else {
+            raw_name.clone()
+        };
+        let rel = rel.trim_start_matches('/').to_string();
+        let rel_trim = rel.trim_end_matches('/').to_string();
+        if rel_trim.is_empty() {
+            continue;
         }
-        let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
-        let meta = serde_json::json!({
-            "version": 1,
-            "title": title_owned,
-            "createdAt": now,
-            "updatedAt": now,
-        });
-        fs::write(
-            dest.join(".typst-editor-project.json"),
-            serde_json::to_string_pretty(&meta).map_err(|e| e.to_string())?,
-        )
-        .map_err(|e| e.to_string())?;
-        Ok(serde_json::json!({
-            "folderId": folder_name,
-            "absPath": dest.to_string_lossy(),
-        }))
+        let is_dir = rel.ends_with('/') || entry.is_dir();
+        let Some(out_path) = ios_zip_output_path(&dest, &rel_trim) else {
+            continue;
+        };
+        if is_dir {
+            fs::create_dir_all(&out_path).map_err(|e| format!("Extract failed: {e}"))?;
+            continue;
+        }
+        if let Some(parent) = out_path.parent() {
+            fs::create_dir_all(parent).map_err(|e| format!("Extract failed: {e}"))?;
+        }
+        let mut out_f = fs::File::create(&out_path).map_err(|e| format!("Extract failed: {e}"))?;
+        copy(&mut entry, &mut out_f).map_err(|e| format!("Extract failed: {e}"))?;
     }
-    #[cfg(not(target_os = "ios"))]
-    {
-        let _ = (app, zip_path, title);
-        Err("ZIP project import is only available in the iOS app.".into())
+
+    if !dest.join("main.typ").is_file() {
+        fs::write(dest.join("main.typ"), [])
+            .map_err(|e| format!("Could not add main.typ: {e}"))?;
     }
+    let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    let meta = serde_json::json!({
+        "version": 1,
+        "title": title_owned,
+        "createdAt": now,
+        "updatedAt": now,
+    });
+    fs::write(
+        dest.join(".typst-editor-project.json"),
+        serde_json::to_string_pretty(&meta).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(serde_json::json!({
+        "folderId": folder_name,
+        "absPath": dest.to_string_lossy(),
+    }))
 }
 
-/// Rename `Projects/<folderId>/` to match `new_title` folder name and update metadata (iOS only).
+/// Rename `Projects/<folderId>/` to match `new_title` folder name and update metadata.
 #[command]
 fn rename_ios_project(
     app: tauri::AppHandle,
     folder_id: String,
     new_title: String,
 ) -> Result<serde_json::Value, String> {
-    #[cfg(target_os = "ios")]
+    let folder_id = folder_id.trim();
+    if folder_id.is_empty()
+        || folder_id.contains("..")
+        || folder_id.contains('/')
+        || folder_id.contains('\\')
     {
-        let folder_id = folder_id.trim();
-        if folder_id.is_empty()
-            || folder_id.contains("..")
-            || folder_id.contains('/')
-            || folder_id.contains('\\')
-        {
-            return Err("Invalid project.".into());
+        return Err("Invalid project.".into());
+    }
+    let title_owned = {
+        let t = new_title.trim();
+        if t.is_empty() {
+            "Untitled".to_string()
+        } else {
+            t.to_string()
         }
-        let title_owned = {
-            let t = new_title.trim();
-            if t.is_empty() {
-                "Untitled".to_string()
-            } else {
-                t.to_string()
-            }
-        };
-        let new_name = project_folder_name_from_title(&title_owned);
-        let doc = app
-            .path()
-            .document_dir()
-            .map_err(|e| e.to_string())?;
-        let projects_dir = doc.join("Projects");
+    };
+    let new_name = project_folder_name_from_title(&title_owned);
+    let root = projects_data_root(&app)?;
+    let projects_dir = root.join("Projects");
         let old_path = projects_dir.join(folder_id);
         if !old_path.is_dir() {
             return Err("Project not found.".into());
@@ -1461,16 +1414,515 @@ fn rename_ios_project(
         )
         .map_err(|e| e.to_string())?;
 
-        Ok(serde_json::json!({
-            "folderId": out_folder_id,
-            "absPath": project_dir.to_string_lossy(),
-            "title": title_owned,
-        }))
+    Ok(serde_json::json!({
+        "folderId": out_folder_id,
+        "absPath": project_dir.to_string_lossy(),
+        "title": title_owned,
+    }))
+}
+
+// ——— Desktop: open folders in place + recent list (no copy into app storage) ———
+
+#[cfg(desktop)]
+const DESKTOP_RECENT_PROJECTS_MAX: usize = 40;
+
+#[cfg(desktop)]
+const DESKTOP_RECENT_STORE: &str = "recent-desktop-projects.json";
+
+#[cfg(desktop)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+struct DesktopRecentStore {
+    version: u32,
+    paths: Vec<String>,
+}
+
+#[cfg(desktop)]
+fn desktop_recent_store_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    let d = app.path().app_local_data_dir().map_err(|e| e.to_string())?;
+    fs::create_dir_all(&d).map_err(|e| e.to_string())?;
+    Ok(d.join(DESKTOP_RECENT_STORE))
+}
+
+#[cfg(desktop)]
+fn desktop_load_recent_paths(app: &tauri::AppHandle) -> Vec<String> {
+    let Ok(p) = desktop_recent_store_path(app) else {
+        return vec![];
+    };
+    let Ok(s) = fs::read_to_string(&p) else {
+        return vec![];
+    };
+    let Ok(v) = serde_json::from_str::<DesktopRecentStore>(&s) else {
+        return vec![];
+    };
+    if v.version != 1 {
+        return vec![];
     }
-    #[cfg(not(target_os = "ios"))]
+    v.paths
+}
+
+#[cfg(desktop)]
+fn desktop_save_recent_paths(app: &tauri::AppHandle, paths: &[String]) -> Result<(), String> {
+    let p = desktop_recent_store_path(app)?;
+    let store = DesktopRecentStore {
+        version: 1,
+        paths: paths.to_vec(),
+    };
+    fs::write(
+        &p,
+        serde_json::to_string_pretty(&store).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())
+}
+
+#[cfg(desktop)]
+fn desktop_read_project_meta(project_dir: &Path) -> (String, String, String) {
+    let meta = project_dir.join(".typst-editor-project.json");
+    if let Ok(s) = fs::read_to_string(&meta) {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&s) {
+            let title = v
+                .get("title")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .trim();
+            let title = if title.is_empty() {
+                project_dir
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("Project")
+                    .to_string()
+            } else {
+                title.to_string()
+            };
+            let c = v
+                .get("createdAt")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .to_string();
+            let u = v
+                .get("updatedAt")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .to_string();
+            return (title, c, u);
+        }
+    }
+    let basename = project_dir
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("Project")
+        .to_string();
+    (basename.clone(), String::new(), String::new())
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DesktopProjectRow {
+    folder_id: String,
+    title: String,
+    created_at: String,
+    updated_at: String,
+    abs_path: String,
+}
+
+#[command]
+fn desktop_recent_projects_list(app: tauri::AppHandle) -> Result<Vec<DesktopProjectRow>, String> {
+    #[cfg(desktop)]
     {
-        let _ = (app, folder_id, new_title);
-        Err("Rename project is only available in the iOS app.".into())
+        let raw = desktop_load_recent_paths(&app);
+        let raw_snapshot = raw.clone();
+        let mut new_order: Vec<String> = vec![];
+        let mut out: Vec<DesktopProjectRow> = vec![];
+        for p in raw {
+            let pb = PathBuf::from(&p);
+            let Ok(canon) = fs::canonicalize(&pb) else {
+                continue;
+            };
+            if !canon.is_dir() {
+                continue;
+            }
+            let key = canon.to_string_lossy().into_owned();
+            if new_order.contains(&key) {
+                continue;
+            }
+            new_order.push(key.clone());
+            let (title, c, u) = desktop_read_project_meta(&canon);
+            out.push(DesktopProjectRow {
+                folder_id: key.clone(),
+                title,
+                created_at: c,
+                updated_at: u,
+                abs_path: key,
+            });
+        }
+        if new_order != raw_snapshot {
+            let _ = desktop_save_recent_paths(&app, &new_order);
+        }
+        Ok(out)
+    }
+    #[cfg(not(desktop))]
+    {
+        let _ = app;
+        Ok(vec![])
+    }
+}
+
+#[command]
+fn desktop_project_row_for_path(path: String) -> Result<DesktopProjectRow, String> {
+    #[cfg(desktop)]
+    {
+        let pb = PathBuf::from(path.trim());
+        if !pb.is_dir() {
+            return Err("Not a folder.".into());
+        }
+        let canon = fs::canonicalize(&pb).map_err(|e| e.to_string())?;
+        let key = canon.to_string_lossy().into_owned();
+        let (title, c, u) = desktop_read_project_meta(&canon);
+        Ok(DesktopProjectRow {
+            folder_id: key.clone(),
+            title,
+            created_at: c,
+            updated_at: u,
+            abs_path: key,
+        })
+    }
+    #[cfg(not(desktop))]
+    {
+        let _ = path;
+        Err("Only on desktop.".into())
+    }
+}
+
+#[command]
+fn desktop_recent_project_touch(app: tauri::AppHandle, path: String) -> Result<(), String> {
+    #[cfg(desktop)]
+    {
+        let pb = PathBuf::from(path.trim());
+        if !pb.is_dir() {
+            return Err("Not a folder.".into());
+        }
+        let canon = fs::canonicalize(&pb).map_err(|e| e.to_string())?;
+        let key = canon.to_string_lossy().into_owned();
+        let mut paths = desktop_load_recent_paths(&app);
+        paths.retain(|q| {
+            fs::canonicalize(PathBuf::from(q))
+                .ok()
+                .map(|c| c.to_string_lossy().into_owned())
+                != Some(key.clone())
+        });
+        paths.insert(0, key);
+        paths.truncate(DESKTOP_RECENT_PROJECTS_MAX);
+        desktop_save_recent_paths(&app, &paths)
+    }
+    #[cfg(not(desktop))]
+    {
+        let _ = (app, path);
+        Ok(())
+    }
+}
+
+#[command]
+fn desktop_recent_project_remove(app: tauri::AppHandle, path: String) -> Result<(), String> {
+    #[cfg(desktop)]
+    {
+        let target = fs::canonicalize(PathBuf::from(path.trim()))
+            .unwrap_or_else(|_| PathBuf::from(path.trim()));
+        let t = target.to_string_lossy().into_owned();
+        let mut paths = desktop_load_recent_paths(&app);
+        paths.retain(|q| {
+            fs::canonicalize(PathBuf::from(q))
+                .ok()
+                .map(|c| c.to_string_lossy().into_owned())
+                != Some(t.clone())
+        });
+        desktop_save_recent_paths(&app, &paths)
+    }
+    #[cfg(not(desktop))]
+    {
+        let _ = (app, path);
+        Ok(())
+    }
+}
+
+#[command]
+fn desktop_fs_read_text_file(path: String) -> Result<String, String> {
+    #[cfg(desktop)]
+    {
+        if path.contains('\0') {
+            return Err("Invalid path.".into());
+        }
+        let pb = PathBuf::from(path.trim());
+        fs::read_to_string(&pb).map_err(|e| e.to_string())
+    }
+    #[cfg(not(desktop))]
+    {
+        let _ = path;
+        Err("Only on desktop.".into())
+    }
+}
+
+#[command]
+fn desktop_fs_write_text_file(path: String, contents: String) -> Result<(), String> {
+    #[cfg(desktop)]
+    {
+        if path.contains('\0') {
+            return Err("Invalid path.".into());
+        }
+        let pb = PathBuf::from(path.trim());
+        if let Some(parent) = pb.parent() {
+            fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        fs::write(&pb, contents.as_bytes()).map_err(|e| e.to_string())
+    }
+    #[cfg(not(desktop))]
+    {
+        let _ = (path, contents);
+        Err("Only on desktop.".into())
+    }
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DesktopFsDirEntry {
+    name: String,
+    is_directory: bool,
+}
+
+#[command]
+fn desktop_fs_read_dir(path: String) -> Result<Vec<DesktopFsDirEntry>, String> {
+    #[cfg(desktop)]
+    {
+        if path.contains('\0') {
+            return Err("Invalid path.".into());
+        }
+        let pb = PathBuf::from(path.trim());
+        if !pb.is_dir() {
+            return Err("Not a directory.".into());
+        }
+        let mut out = vec![];
+        for e in fs::read_dir(&pb).map_err(|e| e.to_string())? {
+            let e = e.map_err(|e| e.to_string())?;
+            let name = e.file_name().to_string_lossy().into_owned();
+            out.push(DesktopFsDirEntry {
+                is_directory: e.path().is_dir(),
+                name,
+            });
+        }
+        Ok(out)
+    }
+    #[cfg(not(desktop))]
+    {
+        let _ = path;
+        Ok(vec![])
+    }
+}
+
+#[command]
+fn desktop_fs_remove(path: String, recursive: bool) -> Result<(), String> {
+    #[cfg(desktop)]
+    {
+        if path.contains('\0') {
+            return Err("Invalid path.".into());
+        }
+        let pb = PathBuf::from(path.trim());
+        if recursive {
+            fs::remove_dir_all(&pb).map_err(|e| e.to_string())
+        } else {
+            fs::remove_file(&pb).map_err(|e| e.to_string())
+        }
+    }
+    #[cfg(not(desktop))]
+    {
+        let _ = (path, recursive);
+        Err("Only on desktop.".into())
+    }
+}
+
+#[command]
+fn desktop_fs_copy_file(from: String, to: String) -> Result<(), String> {
+    #[cfg(desktop)]
+    {
+        if from.contains('\0') || to.contains('\0') {
+            return Err("Invalid path.".into());
+        }
+        let a = PathBuf::from(from.trim());
+        let b = PathBuf::from(to.trim());
+        if let Some(parent) = b.parent() {
+            fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        fs::copy(&a, &b).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+    #[cfg(not(desktop))]
+    {
+        let _ = (from, to);
+        Err("Only on desktop.".into())
+    }
+}
+
+#[command]
+fn desktop_create_project(
+    parent_dir: String,
+    folder_name: String,
+    title: String,
+) -> Result<DesktopProjectRow, String> {
+    #[cfg(desktop)]
+    {
+        let parent = PathBuf::from(parent_dir.trim());
+        if !parent.is_dir() {
+            return Err("Parent is not a folder.".into());
+        }
+        let name = folder_name.trim();
+        if name.is_empty()
+            || name.contains('/')
+            || name.contains('\\')
+            || name == "."
+            || name == ".."
+        {
+            return Err("Invalid folder name.".into());
+        }
+        let proj = parent.join(name);
+        if proj.exists() {
+            return Err("A folder with this name already exists here.".into());
+        }
+        fs::create_dir_all(&proj).map_err(|e| e.to_string())?;
+        fs::write(proj.join("main.typ"), []).map_err(|e| e.to_string())?;
+        let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        let t = title.trim();
+        let t = if t.is_empty() {
+            name.to_string()
+        } else {
+            t.to_string()
+        };
+        let meta = serde_json::json!({
+            "version": 1,
+            "title": t,
+            "createdAt": now,
+            "updatedAt": now,
+        });
+        fs::write(
+            proj.join(".typst-editor-project.json"),
+            serde_json::to_string_pretty(&meta).map_err(|e| e.to_string())?,
+        )
+        .map_err(|e| e.to_string())?;
+        let canon = fs::canonicalize(&proj).map_err(|e| e.to_string())?;
+        let key = canon.to_string_lossy().into_owned();
+        Ok(DesktopProjectRow {
+            folder_id: key.clone(),
+            title: t,
+            created_at: now.clone(),
+            updated_at: now,
+            abs_path: key,
+        })
+    }
+    #[cfg(not(desktop))]
+    {
+        let _ = (parent_dir, folder_name, title);
+        Err("Only on desktop.".into())
+    }
+}
+
+#[command]
+fn desktop_update_project_meta_title(project_path: String, new_title: String) -> Result<(), String> {
+    #[cfg(desktop)]
+    {
+        let pb = PathBuf::from(project_path.trim());
+        if !pb.is_dir() {
+            return Err("Not a project folder.".into());
+        }
+        let meta_path = pb.join(".typst-editor-project.json");
+        let title_owned = new_title.trim();
+        let title_owned = if title_owned.is_empty() {
+            "Untitled".to_string()
+        } else {
+            title_owned.to_string()
+        };
+        let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        if meta_path.is_file() {
+            let meta_s = fs::read_to_string(&meta_path).map_err(|e| e.to_string())?;
+            let mut m: serde_json::Value =
+                serde_json::from_str(&meta_s).map_err(|e| e.to_string())?;
+            if let Some(obj) = m.as_object_mut() {
+                obj.insert(
+                    "title".into(),
+                    serde_json::Value::String(title_owned.clone()),
+                );
+                obj.insert("updatedAt".into(), serde_json::Value::String(now));
+            }
+            fs::write(
+                &meta_path,
+                serde_json::to_string_pretty(&m).map_err(|e| e.to_string())?,
+            )
+            .map_err(|e| e.to_string())?;
+        } else {
+            let meta = serde_json::json!({
+                "version": 1,
+                "title": title_owned,
+                "createdAt": now.clone(),
+                "updatedAt": now,
+            });
+            fs::write(
+                &meta_path,
+                serde_json::to_string_pretty(&meta).map_err(|e| e.to_string())?,
+            )
+            .map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    }
+    #[cfg(not(desktop))]
+    {
+        let _ = (project_path, new_title);
+        Ok(())
+    }
+}
+
+#[command]
+fn desktop_project_touch_updated_meta(project_path: String) -> Result<(), String> {
+    #[cfg(desktop)]
+    {
+        let pb = PathBuf::from(project_path.trim());
+        let meta_path = pb.join(".typst-editor-project.json");
+        if !meta_path.is_file() {
+            return Ok(());
+        }
+        let meta_s = fs::read_to_string(&meta_path).map_err(|e| e.to_string())?;
+        let mut m: serde_json::Value = serde_json::from_str(&meta_s).map_err(|e| e.to_string())?;
+        if let Some(obj) = m.as_object_mut() {
+            obj.insert(
+                "updatedAt".into(),
+                serde_json::Value::String(
+                    chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+                ),
+            );
+        }
+        fs::write(
+            &meta_path,
+            serde_json::to_string_pretty(&m).map_err(|e| e.to_string())?,
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+    #[cfg(not(desktop))]
+    {
+        let _ = project_path;
+        Ok(())
+    }
+}
+
+#[command]
+fn export_desktop_project_zip(project_dir: String, output_path: String) -> Result<(), String> {
+    #[cfg(desktop)]
+    {
+        let dir = PathBuf::from(project_dir.trim());
+        if !dir.is_dir() {
+            return Err("Project folder not found.".into());
+        }
+        let out = PathBuf::from(output_path.trim());
+        zip_project_directory(&dir, &out)
+    }
+    #[cfg(not(desktop))]
+    {
+        let _ = (project_dir, output_path);
+        Err("Only on desktop.".into())
     }
 }
 
@@ -1497,22 +1949,30 @@ pub fn run() {
             {
             let app_menu_title = handle.package_info().name.clone();
 
-            // File Menu
+            // File Menu (project-based app)
+            let all_projects =
+                MenuItem::with_id(handle, "ios-back-projects", "All Projects", true, None::<&str>)?;
             let new_file = MenuItem::with_id(handle, "file-new", "New File", true, Some("CmdOrCtrl+N"))?;
-            let open_file = MenuItem::with_id(handle, "file-open", "Open File...", true, Some("CmdOrCtrl+O"))?;
-            let open_folder = MenuItem::with_id(handle, "file-open-folder", "Open Folder...", true, Some("CmdOrCtrl+Shift+O"))?;
+            let open_project_folder = MenuItem::with_id(
+                handle,
+                "desktop-open-project-folder",
+                "Open Project Folder…",
+                true,
+                None::<&str>,
+            )?;
             let save_file = MenuItem::with_id(handle, "file-save", "Save", true, Some("CmdOrCtrl+S"))?;
             let save_as = MenuItem::with_id(handle, "file-save-as", "Save As...", true, Some("CmdOrCtrl+Shift+S"))?;
             let export_pdf = MenuItem::with_id(handle, "file-export-pdf", "Export PDF…", true, Some("CmdOrCtrl+Shift+E"))?;
-            
+
             let file_menu = Submenu::with_items(
                 handle,
                 "File",
                 true,
                 &[
+                    &all_projects,
                     &new_file,
-                    &open_file,
-                    &open_folder,
+                    &PredefinedMenuItem::separator(handle)?,
+                    &open_project_folder,
                     &PredefinedMenuItem::separator(handle)?,
                     &save_file,
                     &save_as,
@@ -1621,6 +2081,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             app_has_native_menu,
             app_file_ui_mode,
+            workspace_projects_use_document_dir,
             workspace_documents_dir,
             export_ios_project_zip,
             import_ios_project_from_folder,
@@ -1638,6 +2099,19 @@ pub fn run() {
             get_typst_font_storage_info,
             add_typst_fonts_import,
             remove_typst_imported_font,
+            desktop_recent_projects_list,
+            desktop_project_row_for_path,
+            desktop_recent_project_touch,
+            desktop_recent_project_remove,
+            desktop_fs_read_text_file,
+            desktop_fs_write_text_file,
+            desktop_fs_read_dir,
+            desktop_fs_remove,
+            desktop_fs_copy_file,
+            desktop_create_project,
+            desktop_update_project_meta_title,
+            desktop_project_touch_updated_meta,
+            export_desktop_project_zip,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

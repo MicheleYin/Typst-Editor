@@ -14,6 +14,30 @@
     "fs:allow-write-text-file",
     "fs:allow-exists",
     "fs:allow-read-dir",
+    {
+      "identifier": "fs:allow-write-text-file",
+      "allow": ["$APPLOCALDATA/**"]
+    },
+    {
+      "identifier": "fs:allow-read-text-file",
+      "allow": ["$APPLOCALDATA/**"]
+    },
+    {
+      "identifier": "fs:allow-read-dir",
+      "allow": ["$APPLOCALDATA", "$APPLOCALDATA/**"]
+    },
+    {
+      "identifier": "fs:allow-exists",
+      "allow": ["$APPLOCALDATA/**"]
+    },
+    {
+      "identifier": "fs:allow-mkdir",
+      "allow": ["$APPLOCALDATA", "$APPLOCALDATA/**"]
+    },
+    {
+      "identifier": "fs:allow-remove",
+      "allow": ["$APPLOCALDATA/**"]
+    },
     "core:event:allow-listen",
     "core:event:allow-emit",
     "window-state:default"

@@ -6,7 +6,7 @@
     ChevronDown,
     X,
     RefreshCw,
-    ChevronLeft,
+    
   } from "lucide-svelte";
 
   interface SidebarFileItem {
@@ -24,8 +24,7 @@
     onSelectFile,
     onCloseFile,
     onRefreshFolder,
-    iosProjectTitle = null,
-    onIosBackToProjects,
+    
   } = $props<{
     width: number;
     openFiles: { path: string; name: string; isDirty?: boolean; lastSaved?: Date | null }[];
@@ -62,23 +61,8 @@
   style:width="{width}px"
   class="h-full min-h-0 shrink-0 bg-[var(--app-surface)] flex flex-col select-none text-[var(--app-fg-secondary)] overflow-hidden border-r border-[var(--app-border)] min-w-0 max-w-full"
 >
-  {#if iosProjectTitle && onIosBackToProjects}
-    <div
-      class="shrink-0 flex flex-col gap-1 px-2 py-2 border-b border-[var(--app-border)] bg-[var(--app-surface-toolbar)]"
-    >
-      <button
-        type="button"
-        onclick={() => onIosBackToProjects()}
-        class="flex items-center gap-0.5 w-full px-1.5 py-1.5 rounded-md text-left text-xs font-medium text-[var(--app-fg-secondary)] hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-fg)] active:bg-[var(--app-btn-ghost-hover)]"
-      >
-        <ChevronLeft size={16} class="shrink-0 text-[var(--app-icon-muted)]" strokeWidth={2} aria-hidden="true" />
-        <span>All projects</span>
-      </button>
-      <div class="text-[11px] font-semibold text-[var(--app-fg)] truncate px-0.5" title={iosProjectTitle}>
-        {iosProjectTitle}
-      </div>
-    </div>
-  {/if}
+
+
   <div
     class="flex flex-col min-h-0 {openEditorsOpen
       ? 'flex-1 overflow-hidden'

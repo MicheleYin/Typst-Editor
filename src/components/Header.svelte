@@ -9,6 +9,7 @@
     FileDown,
     Loader2,
     SquareTerminal,
+    ChevronLeft,
   } from "lucide-svelte";
   import pkg from "../../package.json";
   import CustomSelect from "./CustomSelect.svelte";
@@ -56,6 +57,10 @@
     inAppMenuLanding = false,
     iosMenuHub = false,
     iosMenuProject = false,
+    hubAllowsFolderImport = false,
+    hubDirectFolders = false,
+    showNativeBackToHub = false,
+    onBackToProjects,
   } = $props<{
     appName: string;
     showInAppMenu?: boolean;
@@ -63,6 +68,10 @@
     inAppMenuLanding?: boolean;
     iosMenuHub?: boolean;
     iosMenuProject?: boolean;
+    hubAllowsFolderImport?: boolean;
+    hubDirectFolders?: boolean;
+    showNativeBackToHub?: boolean;
+    onBackToProjects?: () => void | Promise<void>;
     onShowShortcuts: () => void;
     colorMode?: string;
     onColorModeChange?: (mode: string) => void;
@@ -110,7 +119,20 @@
         landingPage={inAppMenuLanding}
         {iosMenuHub}
         {iosMenuProject}
+        {hubAllowsFolderImport}
+        {hubDirectFolders}
       />
+    {/if}
+    {#if showNativeBackToHub && onBackToProjects}
+      <button
+        type="button"
+        onclick={() => void onBackToProjects()}
+        class="p-1.5 rounded transition-colors text-[var(--app-fg-secondary)] hover:bg-[var(--app-btn-ghost-hover)] hover:text-[var(--app-link)] shrink-0"
+        title="All projects"
+        aria-label="All projects"
+      >
+        <ChevronLeft size={20} aria-hidden="true" />
+      </button>
     {/if}
     <img
       src={appIcon}

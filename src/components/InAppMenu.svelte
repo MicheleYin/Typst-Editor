@@ -7,11 +7,16 @@
     landingPage = false,
     iosMenuHub = false,
     iosMenuProject = false,
+    hubAllowsFolderImport = false,
+    /** Desktop: open folder on disk (no ZIP on hub). */
+    hubDirectFolders = false,
   } = $props<{
     onAction: (id: string) => void;
     landingPage?: boolean;
     iosMenuHub?: boolean;
     iosMenuProject?: boolean;
+    hubAllowsFolderImport?: boolean;
+    hubDirectFolders?: boolean;
   }>();
 
   let open = $state(false);
@@ -27,18 +32,29 @@
 
   type Item = { id: string; label: string; disabled?: boolean };
 
-  const desktopFileItems: Item[] = [
-    { id: "file-new", label: "New File" },
-    { id: "file-open", label: "Open File…" },
-    { id: "file-open-folder", label: "Open Folder…" },
-    { id: "file-save", label: "Save", disabled: false },
-    { id: "file-save-as", label: "Save As…", disabled: false },
-    { id: "file-export-pdf", label: "Export PDF…", disabled: false },
-  ];
+  const hubFileItemsZip: Item = {
+    id: "ios-import-folder-project",
+    label: "Import from ZIP…",
+  };
+  const hubFileItemsFolder: Item = {
+    id: "desktop-import-folder",
+    label: "Import folder…",
+  };
 
-  const iosHubFileItems: Item[] = [
-    { id: "ios-import-folder-project", label: "Import project from ZIP…" },
-  ];
+  const hubFileItems = $derived<Item[]>(
+    iosMenuHub
+      ? hubDirectFolders
+        ? [
+            {
+              id: "desktop-open-project-folder",
+              label: "Open folder on disk…",
+            },
+          ]
+        : hubAllowsFolderImport
+          ? [hubFileItemsFolder, hubFileItemsZip]
+          : [hubFileItemsZip]
+      : [],
+  );
 
   const iosProjectFileItems: Item[] = [
     { id: "ios-back-projects", label: "All projects" },
@@ -86,11 +102,7 @@
   }
 
   const fileItems = $derived(
-    iosMenuProject
-      ? iosProjectFileItems
-      : iosMenuHub
-        ? iosHubFileItems
-        : desktopFileItems,
+    iosMenuProject ? iosProjectFileItems : hubFileItems,
   );
 
   function hint(id: string): string {
@@ -150,7 +162,7 @@
               type="button"
               disabled={fileItemDisabled(item)}
               class="w-full flex items-center justify-between gap-3 px-4 py-2.5 text-sm hover:bg-[var(--app-chip-bg)] disabled:opacity-40 disabled:pointer-events-none active:bg-[var(--app-btn-ghost-hover)] {item.id ===
-              'ios-back-projects'
+              'ios-back-projects' || item.id === 'desktop-import-folder'
                 ? 'text-[var(--app-fg-secondary)] hover:text-[var(--app-fg)]'
                 : 'text-[var(--app-fg)]'}"
               onclick={() => select(item.id)}
@@ -178,47 +190,49 @@
           {/each}
         {/if}
 
-        <div class="px-3 pt-3 pb-1 text-[10px] font-bold uppercase tracking-wider text-[var(--app-fg-muted)]">
-          Edit
-        </div>
-        {#each editItems as item}
-          <button
-            type="button"
-            class="w-full flex items-center justify-between gap-3 px-4 py-2.5 text-sm text-[var(--app-fg)] hover:bg-[var(--app-chip-bg)] active:bg-[var(--app-btn-ghost-hover)]"
-            onclick={() => select(item.id)}
-          >
-            <span class="min-w-0 truncate">{item.label}</span>
-            {#if hint(item.id)}
-              <span
-                class="shrink-0 text-[11px] font-medium tabular-nums tracking-tight text-[var(--app-fg-muted)] px-1.5 py-0.5 rounded-md bg-[var(--app-surface-elevated)] border border-[var(--app-border)]"
-                aria-hidden="true"
-              >
-                {hint(item.id)}
-              </span>
-            {/if}
-          </button>
-        {/each}
+        {#if iosMenuProject}
+          <div class="px-3 pt-3 pb-1 text-[10px] font-bold uppercase tracking-wider text-[var(--app-fg-muted)]">
+            Edit
+          </div>
+          {#each editItems as item}
+            <button
+              type="button"
+              class="w-full flex items-center justify-between gap-3 px-4 py-2.5 text-sm text-[var(--app-fg)] hover:bg-[var(--app-chip-bg)] active:bg-[var(--app-btn-ghost-hover)]"
+              onclick={() => select(item.id)}
+            >
+              <span>{item.label}</span>
+              {#if hint(item.id)}
+                <span
+                  class="shrink-0 text-[11px] font-medium tabular-nums tracking-tight text-[var(--app-fg-muted)] px-1.5 py-0.5 rounded-md bg-[var(--app-surface-elevated)] border border-[var(--app-border)]"
+                  aria-hidden="true"
+                >
+                  {hint(item.id)}
+                </span>
+              {/if}
+            </button>
+          {/each}
 
-        <div class="px-3 pt-3 pb-1 text-[10px] font-bold uppercase tracking-wider text-[var(--app-fg-muted)]">
-          View
-        </div>
-        {#each viewItems as item}
-          <button
-            type="button"
-            class="w-full flex items-center justify-between gap-3 px-4 py-2.5 text-sm text-[var(--app-fg)] hover:bg-[var(--app-chip-bg)] active:bg-[var(--app-btn-ghost-hover)]"
-            onclick={() => select(item.id)}
-          >
-            <span class="min-w-0 truncate">{item.label}</span>
-            {#if hint(item.id)}
-              <span
-                class="shrink-0 text-[11px] font-medium tabular-nums tracking-tight text-[var(--app-fg-muted)] px-1.5 py-0.5 rounded-md bg-[var(--app-surface-elevated)] border border-[var(--app-border)]"
-                aria-hidden="true"
-              >
-                {hint(item.id)}
-              </span>
-            {/if}
-          </button>
-        {/each}
+          <div class="px-3 pt-3 pb-1 text-[10px] font-bold uppercase tracking-wider text-[var(--app-fg-muted)]">
+            View
+          </div>
+          {#each viewItems as item}
+            <button
+              type="button"
+              class="w-full flex items-center justify-between gap-3 px-4 py-2.5 text-sm text-[var(--app-fg)] hover:bg-[var(--app-chip-bg)] active:bg-[var(--app-btn-ghost-hover)]"
+              onclick={() => select(item.id)}
+            >
+              <span>{item.label}</span>
+              {#if hint(item.id)}
+                <span
+                  class="shrink-0 text-[11px] font-medium tabular-nums tracking-tight text-[var(--app-fg-muted)] px-1.5 py-0.5 rounded-md bg-[var(--app-surface-elevated)] border border-[var(--app-border)]"
+                  aria-hidden="true"
+                >
+                  {hint(item.id)}
+                </span>
+              {/if}
+            </button>
+          {/each}
+        {/if}
 
         <div class="px-3 pt-3 pb-1 text-[10px] font-bold uppercase tracking-wider text-[var(--app-fg-muted)]">
           Help
@@ -229,7 +243,7 @@
             class="w-full flex items-center justify-between gap-3 px-4 py-2.5 text-sm text-[var(--app-fg)] hover:bg-[var(--app-chip-bg)] active:bg-[var(--app-btn-ghost-hover)]"
             onclick={() => select(item.id)}
           >
-            <span class="min-w-0 truncate">{item.label}</span>
+            <span>{item.label}</span>
             {#if hint(item.id)}
               <span
                 class="shrink-0 text-[11px] font-medium tabular-nums tracking-tight text-[var(--app-fg-muted)] px-1.5 py-0.5 rounded-md bg-[var(--app-surface-elevated)] border border-[var(--app-border)]"

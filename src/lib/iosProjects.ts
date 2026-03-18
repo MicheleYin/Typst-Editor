@@ -1,6 +1,5 @@
 /**
- * iOS-only: projects live under app Documents/Projects/<folderName>/
- * (folder name matches the project title; only unsafe path chars removed).
+ * Projects live under `Documents/Projects/` (iOS) or app local data `Projects/` (desktop).
  */
 import { invoke } from "@tauri-apps/api/core";
 import {
@@ -30,9 +29,22 @@ export type IosProjectSummary = {
   absPath: string;
 };
 
+let cachedFsBase: BaseDirectory | null = null;
+
+export async function getProjectsFsBase(): Promise<BaseDirectory> {
+  if (cachedFsBase !== null) return cachedFsBase;
+  const useDoc = await invoke<boolean>("workspace_projects_use_document_dir");
+  cachedFsBase = useDoc ? BaseDirectory.Document : BaseDirectory.AppLocalData;
+  return cachedFsBase;
+}
+
+async function projectsFsBase(): Promise<BaseDirectory> {
+  return getProjectsFsBase();
+}
+
 async function documentsRoot(): Promise<string> {
   const r = await invoke<string | null>("workspace_documents_dir");
-  if (!r) throw new Error("Not available");
+  if (!r) throw new Error("Projects storage not available");
   return r.replace(/\/$/, "");
 }
 
@@ -54,9 +66,10 @@ async function projectFolderNameTaken(
   name: string,
   options?: { exceptFolderId?: string },
 ): Promise<boolean> {
+  const base = await projectsFsBase();
   let entries;
   try {
-    entries = await readDir(IOS_PROJECTS_DIR, { baseDir: BaseDirectory.Document });
+    entries = await readDir(IOS_PROJECTS_DIR, { baseDir: base });
   } catch {
     return false;
   }
@@ -91,10 +104,11 @@ export async function iosValidateNewProjectTitle(
 }
 
 export async function iosListProjects(): Promise<IosProjectSummary[]> {
-  await mkdir(IOS_PROJECTS_DIR, { baseDir: BaseDirectory.Document, recursive: true });
+  const base = await projectsFsBase();
+  await mkdir(IOS_PROJECTS_DIR, { baseDir: base, recursive: true });
   let entries;
   try {
-    entries = await readDir(IOS_PROJECTS_DIR, { baseDir: BaseDirectory.Document });
+    entries = await readDir(IOS_PROJECTS_DIR, { baseDir: base });
   } catch {
     return [];
   }
@@ -104,7 +118,7 @@ export async function iosListProjects(): Promise<IosProjectSummary[]> {
     if (!e.isDirectory || !e.name) continue;
     const relMeta = `${IOS_PROJECTS_DIR}/${e.name}/${IOS_PROJECT_META}`;
     try {
-      const raw = await readTextFile(relMeta, { baseDir: BaseDirectory.Document });
+      const raw = await readTextFile(relMeta, { baseDir: base });
       const m = JSON.parse(raw) as IosProjectMeta;
       if (m.version !== 1) continue;
       out.push({
@@ -124,11 +138,12 @@ export async function iosListProjects(): Promise<IosProjectSummary[]> {
 
 /** Creates project folder; call iosValidateNewProjectTitle first. main.typ starts empty. */
 export async function iosCreateProject(title: string): Promise<IosProjectSummary> {
+  const base = await projectsFsBase();
   const t = title.trim() || "Untitled";
   const folderName = projectFolderNameFromTitle(t);
-  await mkdir(IOS_PROJECTS_DIR, { baseDir: BaseDirectory.Document, recursive: true });
-  const base = `${IOS_PROJECTS_DIR}/${folderName}`;
-  await mkdir(base, { baseDir: BaseDirectory.Document, recursive: true });
+  await mkdir(IOS_PROJECTS_DIR, { baseDir: base, recursive: true });
+  const rel = `${IOS_PROJECTS_DIR}/${folderName}`;
+  await mkdir(rel, { baseDir: base, recursive: true });
   const now = new Date().toISOString();
   const meta: IosProjectMeta = {
     version: 1,
@@ -137,30 +152,31 @@ export async function iosCreateProject(title: string): Promise<IosProjectSummary
     updatedAt: now,
   };
   await writeTextFile(
-    `${base}/${IOS_PROJECT_META}`,
+    `${rel}/${IOS_PROJECT_META}`,
     JSON.stringify(meta, null, 2),
-    { baseDir: BaseDirectory.Document },
+    { baseDir: base },
   );
-  await writeTextFile(`${base}/main.typ`, "", { baseDir: BaseDirectory.Document });
+  await writeTextFile(`${rel}/main.typ`, "", { baseDir: base });
   const root = await documentsRoot();
   return {
     folderId: folderName,
     title: t,
     createdAt: now,
     updatedAt: now,
-    absPath: `${root}/${base}`,
+    absPath: `${root}/${rel}`,
   };
 }
 
 /** Title-only metadata update (folder id unchanged). Prefer `iosRenameProject` in the UI. */
 export async function iosUpdateProjectTitle(folderId: string, title: string): Promise<void> {
+  const base = await projectsFsBase();
   const metaPath = `${IOS_PROJECTS_DIR}/${folderId}/${IOS_PROJECT_META}`;
-  const raw = await readTextFile(metaPath, { baseDir: BaseDirectory.Document });
+  const raw = await readTextFile(metaPath, { baseDir: base });
   const m = JSON.parse(raw) as IosProjectMeta;
   m.title = title.trim() || "Untitled";
   m.updatedAt = new Date().toISOString();
   await writeTextFile(metaPath, JSON.stringify(m, null, 2), {
-    baseDir: BaseDirectory.Document,
+    baseDir: base,
   });
 }
 
@@ -201,13 +217,14 @@ export async function iosRenameProject(
 }
 
 export async function iosTouchProjectUpdated(folderId: string): Promise<void> {
+  const base = await projectsFsBase();
   const metaPath = `${IOS_PROJECTS_DIR}/${folderId}/${IOS_PROJECT_META}`;
   try {
-    const raw = await readTextFile(metaPath, { baseDir: BaseDirectory.Document });
+    const raw = await readTextFile(metaPath, { baseDir: base });
     const m = JSON.parse(raw) as IosProjectMeta;
     m.updatedAt = new Date().toISOString();
     await writeTextFile(metaPath, JSON.stringify(m, null, 2), {
-      baseDir: BaseDirectory.Document,
+      baseDir: base,
     });
   } catch {
     /* ignore */
@@ -215,8 +232,9 @@ export async function iosTouchProjectUpdated(folderId: string): Promise<void> {
 }
 
 export async function iosDeleteProject(folderId: string): Promise<void> {
+  const base = await projectsFsBase();
   await remove(`${IOS_PROJECTS_DIR}/${folderId}`, {
-    baseDir: BaseDirectory.Document,
+    baseDir: base,
     recursive: true,
   });
 }
@@ -227,11 +245,12 @@ export async function iosImportTypIntoProject(
   sourceAbsPath: string,
   preferredName: string,
 ): Promise<string> {
+  const base = await projectsFsBase();
   const text = await readTextFile(sourceAbsPath);
   let name = preferredName.endsWith(".typ") ? preferredName : `${preferredName}.typ`;
   if (name.startsWith(".")) name = `imported-${name.replace(/^\./, "")}`;
-  const base = `${IOS_PROJECTS_DIR}/${folderId}`;
-  const existing = await readDir(base, { baseDir: BaseDirectory.Document });
+  const rel = `${IOS_PROJECTS_DIR}/${folderId}`;
+  const existing = await readDir(rel, { baseDir: base });
   const names = new Set(existing.map((e) => e.name).filter(Boolean));
   if (names.has(name)) {
     const stem = name.replace(/\.typ$/i, "");
@@ -239,8 +258,8 @@ export async function iosImportTypIntoProject(
     while (names.has(`${stem}-${n}.typ`)) n += 1;
     name = `${stem}-${n}.typ`;
   }
-  await writeTextFile(`${base}/${name}`, text, { baseDir: BaseDirectory.Document });
+  await writeTextFile(`${rel}/${name}`, text, { baseDir: base });
   await iosTouchProjectUpdated(folderId);
   const root = await documentsRoot();
-  return `${root}/${base}/${name}`;
+  return `${root}/${rel}/${name}`;
 }

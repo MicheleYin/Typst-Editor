@@ -27,9 +27,11 @@
   let {
     editor = undefined,
     typstFontFaces = [],
+    showTypstToolbar = true,
   } = $props<{
     editor: monaco.editor.IStandaloneCodeEditor | undefined;
     typstFontFaces?: TypstFontFace[];
+    showTypstToolbar?: boolean;
   }>();
 
   type ToolbarActive = {
@@ -565,9 +567,12 @@
 </script>
 
 <div
-  class="flex flex-wrap items-center gap-1 px-2 py-1 border-b border-[var(--app-border)] bg-[var(--app-surface-toolbar)] shrink-0 gap-y-1"
+  class="flex flex-wrap items-center gap-1 px-2 py-1 border-b border-[var(--app-border)] bg-[var(--app-surface-toolbar)] shrink-0 gap-y-1 {showTypstToolbar
+    ? ''
+    : 'hidden'}"
   role="toolbar"
   aria-label="Typst quick actions"
+  aria-hidden={!showTypstToolbar}
 >
   <FontSelectTypst faces={typstFontFaces} disabled={!editor} onPick={onFontPick} />
 

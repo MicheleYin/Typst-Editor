@@ -16,6 +16,8 @@
 
   let {
     initialValue,
+    languageId = "typst",
+    readOnly = false,
     appZoom,
     monacoTheme,
     onContentChange,
@@ -23,6 +25,8 @@
     onDispose,
   } = $props<{
     initialValue: string;
+    languageId?: string;
+    readOnly?: boolean;
     appZoom: number;
     monacoTheme: string;
     onContentChange: (value: string) => void;
@@ -61,8 +65,9 @@
 
       ed = monaco.editor.create(host, {
         value: initialValue,
-        language: "typst",
+        language: languageId,
         theme: monacoTheme,
+        readOnly,
         minimap: { enabled: false },
         fontSize: 14 * appZoom,
         wordWrap: "on",
@@ -111,6 +116,20 @@
     if (ed && monacoTheme) {
       monaco.editor.setTheme(monacoTheme);
     }
+  });
+
+  $effect(() => {
+    const ed = editorInstance;
+    const id = languageId;
+    if (ed) {
+      const m = ed.getModel();
+      if (m) monaco.editor.setModelLanguage(m, id);
+    }
+  });
+
+  $effect(() => {
+    const ed = editorInstance;
+    if (ed) ed.updateOptions({ readOnly });
   });
 </script>
 
