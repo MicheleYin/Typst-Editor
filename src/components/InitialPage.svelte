@@ -13,7 +13,7 @@
 </script>
 
 <div
-  class="absolute inset-0 z-[60] flex flex-col items-center justify-center bg-[#1e1e1e] p-8"
+  class="absolute inset-0 z-[60] flex flex-col items-center justify-center bg-[#1e1e1e] p-8 overflow-y-auto"
 >
   <div
     class="max-w-md w-full text-center space-y-8 animate-in fade-in zoom-in duration-500"
@@ -68,20 +68,5 @@
       </button>
     </div>
 
-    <div class="pt-8 text-xs text-gray-600">
-      Press <kbd
-        class="px-1.5 py-0.5 rounded bg-[#2d2d2d] border border-[#3d3d3d] text-gray-400"
-        >Cmd</kbd
-      >
-      +
-      <kbd
-        class="px-1.5 py-0.5 rounded bg-[#2d2d2d] border border-[#3d3d3d] text-gray-400"
-        >K</kbd
-      >
-      <kbd
-        class="px-1.5 py-0.5 rounded bg-[#2d2d2d] border border-[#3d3d3d] text-gray-400"
-        >S</kbd
-      > for shortcuts
-    </div>
   </div>
 </div>

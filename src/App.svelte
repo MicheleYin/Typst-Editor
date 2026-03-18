@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
   import * as monaco from "monaco-editor";
   import { listen } from "@tauri-apps/api/event";
@@ -46,17 +46,48 @@ $ x^2 + y^2 = r^2 $
   let pageCount = $state(0);
   let currentPage = $state(0);
   let error = $state("");
-  let editorWidth = $state(50);
+  const EDITOR_SPLIT_KEY = "typst-editor-editor-split-px";
+  const EDITOR_SPLIT_MIN = 200;
+  const PREVIEW_MIN_W = 280;
+  const SPLIT_GRIP_PX = 4;
+  function readStoredEditorSplitPx(): number {
+    try {
+      const v = parseInt(localStorage.getItem(EDITOR_SPLIT_KEY) ?? "", 10);
+      if (Number.isFinite(v) && v >= EDITOR_SPLIT_MIN) return v;
+    } catch {
+      /* ignore */
+    }
+    return 520;
+  }
+  let editorWidthPx = $state(readStoredEditorSplitPx());
   let isResizing = $state(false);
-  let container: HTMLDivElement;
   let editor = $state<monaco.editor.IStandaloneCodeEditor | undefined>(undefined);
 
   let scale = $state(1);
   let translateX = $state(0);
   let translateY = $state(0);
   let folderFiles = $state<{ name: string; path: string; isDirectory: boolean }[]>([]);
-  let sidebarWidth = $state(260);
+
+  const SIDEBAR_W_KEY = "typst-editor-sidebar-width";
+  const SIDEBAR_MIN = 160;
+  const SIDEBAR_MAX = 560;
+  function readStoredSidebarWidth(): number {
+    try {
+      const v = parseInt(localStorage.getItem(SIDEBAR_W_KEY) ?? "", 10);
+      if (Number.isFinite(v)) {
+        return Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, v));
+      }
+    } catch {
+      /* ignore */
+    }
+    return 260;
+  }
+  let sidebarWidth = $state(readStoredSidebarWidth());
   let sidebarVisible = $state(true);
+  let previewVisible = $state(true);
+  let isResizingSidebar = $state(false);
+  let mainLayout: HTMLDivElement | undefined = $state();
+  let editorPreviewRegion: HTMLDivElement | undefined = $state();
   let isShortcutsModalOpen = $state(false);
   let appZoom = $state(1);
 
@@ -228,22 +259,96 @@ $ x^2 + y^2 = r^2 $
     return () => clearTimeout(timeoutId);
   });
 
-  function handleResize(e: MouseEvent) {
-    if (isResizing && container) {
-      const rect = container.getBoundingClientRect();
-      const newWidth = ((e.clientX - rect.left) / rect.width) * 100;
-      if (newWidth > 10 && newWidth < 90) {
-        editorWidth = newWidth;
+  /** Keep editor split valid when sidebar width or visibility changes */
+  $effect(() => {
+    sidebarVisible;
+    sidebarWidth;
+    if (!previewVisible) return;
+    tick().then(() => {
+      if (!editorPreviewRegion) return;
+      const rect = editorPreviewRegion.getBoundingClientRect();
+      const max = rect.width - SPLIT_GRIP_PX - PREVIEW_MIN_W;
+      if (max < EDITOR_SPLIT_MIN) return;
+      if (editorWidthPx > max) editorWidthPx = max;
+    });
+  });
+
+  function handleEditorSplitResize(e: MouseEvent) {
+    if (!isResizing || !editorPreviewRegion) return;
+    const rect = editorPreviewRegion.getBoundingClientRect();
+    const maxEditor = rect.width - SPLIT_GRIP_PX - PREVIEW_MIN_W;
+    if (maxEditor < EDITOR_SPLIT_MIN) return;
+    const x = e.clientX - rect.left;
+    editorWidthPx = Math.round(
+      Math.min(maxEditor, Math.max(EDITOR_SPLIT_MIN, x)),
+    );
+  }
+
+  function handleSidebarResize(e: MouseEvent) {
+    if (!isResizingSidebar || !mainLayout) return;
+    const { left, width: totalW } = mainLayout.getBoundingClientRect();
+    const editorPreviewMin = 320;
+    const max = Math.max(
+      SIDEBAR_MIN,
+      Math.min(SIDEBAR_MAX, totalW - editorPreviewMin),
+    );
+    sidebarWidth = Math.round(
+      Math.min(max, Math.max(SIDEBAR_MIN, e.clientX - left)),
+    );
+  }
+
+  function applyResizeSelectionShield() {
+    (document.activeElement as HTMLElement | null)?.blur?.();
+    document.body.style.userSelect = "none";
+    document.body.style.webkitUserSelect = "none";
+  }
+
+  function clearResizeSelectionShield() {
+    document.body.style.removeProperty("user-select");
+    document.body.style.removeProperty("-webkit-user-select");
+  }
+
+  function stopAllResizing() {
+    const wasEditorSplit = isResizing;
+    if (isResizingSidebar) {
+      try {
+        localStorage.setItem(SIDEBAR_W_KEY, String(sidebarWidth));
+      } catch {
+        /* ignore */
       }
     }
-  }
-
-  function stopResizing() {
+    if (wasEditorSplit && previewVisible) {
+      try {
+        localStorage.setItem(EDITOR_SPLIT_KEY, String(editorWidthPx));
+      } catch {
+        /* ignore */
+      }
+    }
     isResizing = false;
+    isResizingSidebar = false;
+    clearResizeSelectionShield();
   }
 
-  function handleMouseDown() {
+  function handleEditorSplitMouseDown(e: MouseEvent) {
+    e.preventDefault();
+    applyResizeSelectionShield();
     isResizing = true;
+  }
+
+  function handleSidebarGripMouseDown(e: MouseEvent) {
+    e.preventDefault();
+    applyResizeSelectionShield();
+    isResizingSidebar = true;
+  }
+
+  function onWindowMouseMove(e: MouseEvent) {
+    if (isResizing) {
+      e.preventDefault();
+      handleEditorSplitResize(e);
+    } else if (isResizingSidebar) {
+      e.preventDefault();
+      handleSidebarResize(e);
+    }
   }
 
   function appZoomIn() {
@@ -406,13 +511,13 @@ $ x^2 + y^2 = r^2 $
 </script>
 
 <svelte:window
-  onmousemove={isResizing ? handleResize : null}
-  onmouseup={stopResizing}
+  onmousemove={isResizing || isResizingSidebar ? onWindowMouseMove : null}
+  onmouseup={stopAllResizing}
 />
 
 <div
-  bind:this={container}
-  class="flex flex-col h-screen bg-[#1e1e1e] text-white overflow-hidden {isResizing
+  class="flex flex-col h-screen bg-[#1e1e1e] text-white overflow-hidden {isResizing ||
+  isResizingSidebar
     ? 'cursor-col-resize select-none'
     : ''}"
   style="zoom: {appZoom};"
@@ -422,6 +527,11 @@ $ x^2 + y^2 = r^2 $
     filePath={currentFilePath}
     isDirty={currentFileDirty}
     lastSaved={currentFileLastSaved}
+    showPanelToggles={!isLandingPage}
+    {sidebarVisible}
+    onToggleSidebar={() => (sidebarVisible = !sidebarVisible)}
+    {previewVisible}
+    onTogglePreview={() => (previewVisible = !previewVisible)}
   />
 
   <Modal
@@ -432,7 +542,10 @@ $ x^2 + y^2 = r^2 $
     <ShortcutEditor />
   </Modal>
 
-  <div class="flex flex-1 w-full overflow-hidden relative">
+  <div
+    bind:this={mainLayout}
+    class="flex flex-1 w-full min-h-0 overflow-hidden relative"
+  >
     {#if isLandingPage}
       <InitialPage
         onNewFile={() => handleShortcutCommand("file.new")}
@@ -451,49 +564,75 @@ $ x^2 + y^2 = r^2 $
         onSelectFile={openFileByPath}
         onCloseFile={handleCloseFile}
       />
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <div
+        onmousedown={handleSidebarGripMouseDown}
+        class="w-1 cursor-col-resize bg-[#333] hover:bg-blue-500 transition-colors shrink-0 flex items-center justify-center z-10 relative group {isResizingSidebar
+          ? 'bg-blue-600'
+          : ''}"
+        title="Drag to resize sidebar"
+      >
+        <div
+          class="absolute h-10 w-6 flex items-center justify-center rounded-md bg-[#1e1e1e] border border-[#333] opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none"
+        >
+          <GripVertical size={16} class="text-gray-400" />
+        </div>
+      </div>
     {/if}
 
     <div
-      style:width="{editorWidth}%"
-      class="h-full border-r border-[#333] relative min-w-0 flex flex-col"
-    >
-      <MonacoEditorPane
-        initialValue={content}
-        {appZoom}
-        onContentChange={onEditorContentChange}
-        onReady={(ed) => {
-          editor = ed;
-        }}
-        onDispose={() => {
-          editor = undefined;
-        }}
-      />
-    </div>
-
-    <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <div
-      onmousedown={handleMouseDown}
-      class="w-1 cursor-col-resize bg-[#333] hover:bg-blue-500 transition-colors flex items-center justify-center z-10 relative group shrink-0 {isResizing
-        ? 'bg-blue-600'
-        : ''}"
+      bind:this={editorPreviewRegion}
+      class="flex flex-1 min-h-0 min-w-0"
     >
       <div
-        class="absolute h-10 w-6 flex items-center justify-center rounded-md bg-[#1e1e1e] border border-[#333] opacity-0 group-hover:opacity-100 transition-opacity"
+        class="h-full relative min-w-0 flex flex-col border-r border-[#333] overflow-hidden {previewVisible
+          ? 'shrink-0'
+          : 'flex-1'}"
+        style:width={previewVisible ? `${editorWidthPx}px` : undefined}
       >
-        <GripVertical size={16} class="text-gray-400" />
+        <MonacoEditorPane
+          initialValue={content}
+          {appZoom}
+          onContentChange={onEditorContentChange}
+          onReady={(ed) => {
+            editor = ed;
+          }}
+          onDispose={() => {
+            editor = undefined;
+          }}
+        />
       </div>
-    </div>
 
-    <div style:width="{100 - editorWidth}%" class="h-full min-w-0 flex flex-col">
-      <SvgPreview
-        {error}
-        {pages}
-        bind:currentPage
-        {pageCount}
-        bind:scale
-        bind:translateX
-        bind:translateY
-      />
+      {#if previewVisible}
+        <!-- svelte-ignore a11y_no_static_element_interactions -->
+        <div
+          onmousedown={handleEditorSplitMouseDown}
+          class="w-1 cursor-col-resize bg-[#333] hover:bg-blue-500 transition-colors flex items-center justify-center z-10 relative group shrink-0 {isResizing
+            ? 'bg-blue-600'
+            : ''}"
+        >
+          <div
+            class="absolute h-10 w-6 flex items-center justify-center rounded-md bg-[#1e1e1e] border border-[#333] opacity-0 group-hover:opacity-100 transition-opacity"
+          >
+            <GripVertical size={16} class="text-gray-400" />
+          </div>
+        </div>
+
+        <div
+          class="h-full min-w-0 flex flex-col flex-1 overflow-hidden"
+          style:min-width="{PREVIEW_MIN_W}px"
+        >
+          <SvgPreview
+            {error}
+            {pages}
+            bind:currentPage
+            {pageCount}
+            bind:scale
+            bind:translateX
+            bind:translateY
+          />
+        </div>
+      {/if}
     </div>
   </div>
 </div>

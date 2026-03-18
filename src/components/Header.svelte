@@ -1,11 +1,48 @@
 <script lang="ts">
-  import { Settings } from "lucide-svelte";
+  import { onMount } from "svelte";
+  import { invoke } from "@tauri-apps/api/core";
+  import { getVersion } from "@tauri-apps/api/app";
+  import { Settings, PanelLeft, PanelRight } from "lucide-svelte";
+  import pkg from "../../package.json";
 
-  let { onShowShortcuts, filePath = null, isDirty = false, lastSaved = null } = $props<{
+  let editorVersion = $state("");
+  let typstEngineVersion = $state("");
+
+  onMount(() => {
+    void (async () => {
+      try {
+        editorVersion = await getVersion();
+      } catch {
+        editorVersion = pkg.version;
+      }
+      try {
+        typstEngineVersion = await invoke<string>("typst_engine_version");
+      } catch {
+        typstEngineVersion = "";
+      }
+    })();
+  });
+
+  let {
+    onShowShortcuts,
+    filePath = null,
+    isDirty = false,
+    lastSaved = null,
+    sidebarVisible = true,
+    onToggleSidebar,
+    previewVisible = true,
+    onTogglePreview,
+    showPanelToggles = true,
+  } = $props<{
     onShowShortcuts: () => void;
     filePath?: string | null;
     isDirty?: boolean;
     lastSaved?: Date | null;
+    sidebarVisible?: boolean;
+    onToggleSidebar: () => void;
+    previewVisible?: boolean;
+    onTogglePreview: () => void;
+    showPanelToggles?: boolean;
   }>();
 
   function formatRelativeTime(date: Date | null | undefined) {
@@ -54,16 +91,45 @@
     {/if}
   </div>
 
-  <div class="ml-auto flex items-center gap-4">
-    <button 
+  <div class="ml-auto flex items-center gap-1 sm:gap-2">
+    {#if showPanelToggles}
+      <button
+        type="button"
+        onclick={onToggleSidebar}
+        class="p-1.5 rounded transition-colors {sidebarVisible
+          ? 'text-blue-400 bg-[#2d2d2d] hover:bg-[#333]'
+          : 'text-gray-500 hover:bg-[#333] hover:text-gray-300'}"
+        title={sidebarVisible ? "Hide sidebar" : "Show sidebar"}
+        aria-pressed={sidebarVisible}
+      >
+        <PanelLeft size={18} />
+      </button>
+      <button
+        type="button"
+        onclick={onTogglePreview}
+        class="p-1.5 rounded transition-colors {previewVisible
+          ? 'text-blue-400 bg-[#2d2d2d] hover:bg-[#333]'
+          : 'text-gray-500 hover:bg-[#333] hover:text-gray-300'}"
+        title={previewVisible ? "Hide preview" : "Show preview"}
+        aria-pressed={previewVisible}
+      >
+        <PanelRight size={18} />
+      </button>
+    {/if}
+    <button
+      type="button"
       onclick={onShowShortcuts}
       class="p-1.5 hover:bg-[#333] rounded text-gray-400 hover:text-white transition-colors"
       title="Keyboard Shortcuts"
     >
       <Settings size={16} />
     </button>
-    <div class="text-[10px] text-gray-500 hidden sm:block">
-      Typst 0.14.2
+    <div
+      class="text-[10px] text-gray-500 hidden sm:block text-right leading-tight tabular-nums"
+      title="Typst Editor app version and linked Typst compiler"
+    >
+      <div>Typst Editor v{editorVersion || "…"}</div>
+      <div class="text-gray-600">Typst {typstEngineVersion || "…"}</div>
     </div>
   </div>
 </header>

@@ -100,6 +100,12 @@ fn compile_typst(content: String) -> Result<CompilationResult, String> {
     Ok(CompilationResult { pages, page_count })
 }
 
+/// Linked Typst compiler version from Cargo.lock (see `build.rs`).
+#[command]
+fn typst_engine_version() -> String {
+    env!("TYPST_ENGINE_VERSION").to_string()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -213,7 +219,7 @@ pub fn run() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![compile_typst])
+        .invoke_handler(tauri::generate_handler![compile_typst, typst_engine_version])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

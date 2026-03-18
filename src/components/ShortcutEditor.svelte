@@ -1,10 +1,22 @@
 <script lang="ts">
-  import { allShortcuts, shortcutOverrides, formatKeys } from "../lib/shortcuts";
-  import { Search, Keyboard, RotateCcw, Edit2 } from "lucide-svelte";
+  import {
+    allShortcuts,
+    shortcutOverrides,
+    formatKeys,
+    physicalKeyTokenFromEvent,
+    findShortcutKeyCollisions,
+  } from "../lib/shortcuts";
+  import { Search, Keyboard, RotateCcw, Edit2, AlertTriangle } from "lucide-svelte";
+
+  let keyCollisions = $derived(
+    findShortcutKeyCollisions($allShortcuts, $shortcutOverrides),
+  );
 
   let searchQuery = $state("");
   let editingId = $state<string | null>(null);
   let recordedKeys = $state("");
+  /** First chord when recording a two-key sequence (⌘K then ⌘S) */
+  let pendingFirstChord = $state("");
 
   let filteredShortcuts = $derived(
     $allShortcuts.filter(s => 
@@ -16,11 +28,13 @@
   function startEditing(id: string) {
     editingId = id;
     recordedKeys = "";
+    pendingFirstChord = "";
     window.addEventListener("keydown", recordKey);
   }
 
   function stopEditing() {
     editingId = null;
+    pendingFirstChord = "";
     window.removeEventListener("keydown", recordKey);
   }
 
@@ -33,25 +47,42 @@
       return;
     }
 
+    if (e.key === "Backspace") {
+      pendingFirstChord = "";
+      recordedKeys = "";
+      return;
+    }
+
     if (e.key === "Enter" && recordedKeys) {
       saveShortcut();
       return;
     }
 
-    // Capture modifiers
-    let parts = [];
+    if (e.key === "Enter") return;
+
+    let parts: string[] = [];
     if (e.metaKey || e.ctrlKey) parts.push("Mod");
     if (e.shiftKey) parts.push("Shift");
     if (e.altKey) parts.push("Alt");
 
-    // Only add the main key if it's not a modifier itself
-    const mainKey = e.key === " " ? "Space" : e.key;
-    if (!["Control", "Shift", "Alt", "Meta"].includes(mainKey)) {
-      parts.push(mainKey === "+" ? "Plus" : mainKey === "-" ? "Minus" : mainKey);
-      recordedKeys = parts.join("+");
-    } else {
-      recordedKeys = parts.join("+");
+    const mainToken = physicalKeyTokenFromEvent(e);
+    if (
+      !mainToken ||
+      ["Control", "Shift", "Alt", "Meta"].includes(e.key)
+    ) {
+      return;
     }
+    parts.push(mainToken);
+    const chord = parts.join("+");
+
+    if (!pendingFirstChord) {
+      pendingFirstChord = chord;
+      recordedKeys = chord;
+      return;
+    }
+
+    recordedKeys = `${pendingFirstChord} ${chord}`;
+    pendingFirstChord = "";
   }
 
   function saveShortcut() {
@@ -73,6 +104,37 @@
 </script>
 
 <div class="flex flex-col gap-4 h-full min-h-[400px]">
+  {#if keyCollisions.length > 0}
+    <div
+      role="alert"
+      class="rounded-lg border border-amber-600/50 bg-amber-950/40 px-3 py-2.5 text-sm text-amber-100"
+    >
+      <div class="flex items-start gap-2">
+        <AlertTriangle
+          class="shrink-0 text-amber-400 mt-0.5"
+          size={18}
+          aria-hidden="true"
+        />
+        <div class="min-w-0 space-y-2">
+          <p class="font-medium text-amber-200">
+            Multiple commands use the same shortcut
+          </p>
+          <ul class="list-none space-y-1.5 text-amber-100/90 text-xs">
+            {#each keyCollisions as group}
+              <li>
+                <span class="font-mono font-semibold text-amber-300"
+                  >{group.displayKey}</span
+                >
+                <span class="text-amber-200/70"> — </span>
+                {group.commands.map((c) => c.label).join(" · ")}
+              </li>
+            {/each}
+          </ul>
+        </div>
+      </div>
+    </div>
+  {/if}
+
   <div class="relative">
     <Search size={16} class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" />
     <input
@@ -82,7 +144,16 @@
       class="w-full bg-[#1e1e1e] border border-[#333] rounded px-10 py-2 text-sm focus:outline-none focus:border-blue-500 transition-colors"
     />
   </div>
-
+  <div class="text-[11px] text-gray-500 flex flex-col gap-1">
+    <div class="flex items-center gap-2">
+      <Keyboard size={14} />
+      <span
+        >Click a keybinding to edit. For <strong class="text-gray-400">⌘K ⌘S</strong>-style
+        chords: press the first combo, then the second (or Enter after the first to keep a single
+        shortcut). Backspace clears. Esc cancels.</span
+      >
+    </div>
+  </div>
   <div class="flex-1 overflow-auto border border-[#333] rounded-md">
     <table class="w-full text-sm text-left border-collapse">
       <thead class="bg-[#1e1e1e] sticky top-0 border-b border-[#333] z-10">
@@ -155,8 +226,5 @@
     </table>
   </div>
 
-  <div class="text-[11px] text-gray-500 flex items-center gap-2">
-    <Keyboard size={14} />
-    <span>Click on a keybinding to change it. Esc to cancel, Enter to save.</span>
-  </div>
+ 
 </div>
