@@ -7,9 +7,13 @@
   import ShortcutEditor from "./ShortcutEditor.svelte";
   import {
     getTypstFontConfig,
-    setTypstFontConfig,
     importTypstFontConfigJson,
+    addTypstFontsImport,
+    removeTypstImportedFont,
+    getTypstFontStorageInfo,
+    displayFontPath,
     type TypstFontConfig,
+    type TypstFontStorageInfo,
   } from "../lib/typstFonts";
 
   let {
@@ -49,6 +53,7 @@
   let clearBusy = $state(false);
 
   let fontConfig = $state<TypstFontConfig>({ directories: [], files: [] });
+  let fontStorageInfo = $state<TypstFontStorageInfo | null>(null);
   let fontCfgLoading = $state(false);
   let fontCfgError = $state("");
   let fontCfgBusy = $state(false);
@@ -78,6 +83,7 @@
     fontCfgError = "";
     try {
       fontConfig = await getTypstFontConfig();
+      fontStorageInfo = await getTypstFontStorageInfo();
     } catch (e) {
       fontCfgError = String(e);
     } finally {
@@ -85,12 +91,13 @@
     }
   }
 
-  async function persistFontCfg(next: TypstFontConfig) {
+  async function importFontFolder() {
     fontCfgBusy = true;
     fontCfgError = "";
     try {
-      await setTypstFontConfig(next);
-      fontConfig = next;
+      const p = await open({ directory: true, multiple: false });
+      if (typeof p !== "string" || !p) return;
+      fontConfig = await addTypstFontsImport([p], true);
     } catch (e) {
       fontCfgError = String(e);
     } finally {
@@ -98,21 +105,9 @@
     }
   }
 
-  async function addFontFolder() {
-    try {
-      const p = await open({ directory: true, multiple: false });
-      if (typeof p !== "string" || !p) return;
-      if (fontConfig.directories.includes(p)) return;
-      await persistFontCfg({
-        ...fontConfig,
-        directories: [...fontConfig.directories, p],
-      });
-    } catch (e) {
-      fontCfgError = String(e);
-    }
-  }
-
-  async function addFontFiles() {
+  async function importFontFiles() {
+    fontCfgBusy = true;
+    fontCfgError = "";
     try {
       const p = await open({
         multiple: true,
@@ -120,21 +115,26 @@
       });
       if (p == null) return;
       const arr = Array.isArray(p) ? p : [p];
-      const set = new Set([...fontConfig.files, ...arr]);
-      await persistFontCfg({ ...fontConfig, files: [...set] });
+      fontConfig = await addTypstFontsImport(arr, false);
     } catch (e) {
       fontCfgError = String(e);
+    } finally {
+      fontCfgBusy = false;
     }
   }
 
-  async function removeDir(i: number) {
-    const next = { ...fontConfig, directories: fontConfig.directories.filter((_, j) => j !== i) };
-    await persistFontCfg(next);
-  }
-
-  async function removeFile(i: number) {
-    const next = { ...fontConfig, files: fontConfig.files.filter((_, j) => j !== i) };
-    await persistFontCfg(next);
+  async function removeImportedFile(i: number) {
+    const path = fontConfig.files[i];
+    if (!path) return;
+    fontCfgBusy = true;
+    fontCfgError = "";
+    try {
+      fontConfig = await removeTypstImportedFont(path);
+    } catch (e) {
+      fontCfgError = String(e);
+    } finally {
+      fontCfgBusy = false;
+    }
   }
 
   async function exportFontConfigTemplate() {
@@ -156,6 +156,8 @@
   }
 
   async function importFontConfigMerge() {
+    fontCfgBusy = true;
+    fontCfgError = "";
     try {
       const p = await open({
         multiple: false,
@@ -165,6 +167,8 @@
       fontConfig = await importTypstFontConfigJson(p);
     } catch (e) {
       fontCfgError = String(e);
+    } finally {
+      fontCfgBusy = false;
     }
   }
 
@@ -261,87 +265,92 @@
         {:else if tab === "fonts"}
           <div class="space-y-4 text-sm text-[var(--app-fg)]">
             <p class="text-[var(--app-fg-secondary)] text-xs leading-relaxed">
-              The Typst compiler loads <strong class="text-[var(--app-fg)]">bundled</strong> fonts plus every
-              <code class="text-[var(--app-link)]">.ttf</code> /
-              <code class="text-[var(--app-link)]">.otf</code> /
-              <code class="text-[var(--app-link)]">.ttc</code> under the folders below, and any individual files
-              you add. Use <code class="text-[var(--app-link)]">#set text(font: &quot;Family Name&quot;)</code> as
-              shown in the font picker.
+              Typst loads <strong class="text-[var(--app-fg)]">typst-assets</strong> fonts (e.g. New Computer
+              Modern), fonts from <code class="text-[var(--app-link)]">src-tauri/resources/fonts/bundled</code>
+              (shipped with the app), and fonts you <strong class="text-[var(--app-fg)]">import</strong> here.
+              Imports are <strong class="text-[var(--app-fg)]">copied</strong> into app local data so preview and
+              PDF work under the App Store sandbox. Use
+              <code class="text-[var(--app-link)]">#set text(font: &quot;Family Name&quot;)</code> in your
+              document.
             </p>
 
-            {#if fontCfgLoading && !fontConfig.directories.length && !fontConfig.files.length}
+            {#if fontStorageInfo}
+              <div class="rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)] p-3 space-y-1.5">
+                <div class="text-[10px] uppercase tracking-wider text-[var(--app-fg-muted)]">Import storage</div>
+                <p
+                  class="text-[11px] font-mono break-all text-[var(--app-fg-secondary)] leading-snug"
+                  title={fontStorageInfo.importedDir}
+                >
+                  {fontStorageInfo.importedDir}
+                </p>
+                {#if fontStorageInfo.appBundledFontsDir}
+                  <div class="text-[10px] uppercase tracking-wider text-[var(--app-fg-muted)] pt-1">
+                    App-bundled fonts dir
+                  </div>
+                  <p class="text-[11px] font-mono break-all text-[var(--app-fg-muted)] leading-snug">
+                    {fontStorageInfo.appBundledFontsDir}
+                  </p>
+                {/if}
+              </div>
+            {/if}
+
+            {#if fontCfgLoading && !fontConfig.files.length}
               <p class="text-[var(--app-fg-muted)] text-xs">Loading…</p>
-            {:else if fontCfgError && !fontConfig.directories.length && !fontConfig.files.length}
+            {:else if fontCfgError && !fontConfig.files.length}
               <p class="text-red-400 text-xs">{fontCfgError}</p>
             {/if}
 
             <div class="rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)] p-4 space-y-3">
               <div class="flex items-center justify-between gap-2 flex-wrap">
                 <span class="text-[10px] uppercase tracking-wider text-[var(--app-fg-muted)]"
-                  >Font folders (recursive)</span
+                  >Import into app storage</span
                 >
-                <button
-                  type="button"
-                  disabled={fontCfgBusy}
-                  onclick={() => void addFontFolder()}
-                  class="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-md border border-[var(--app-border)] bg-[var(--app-surface-elevated)] hover:bg-[var(--app-surface-hover)] disabled:opacity-50"
-                >
-                  <FolderOpen size={14} /> Add folder
-                </button>
+                <div class="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    disabled={fontCfgBusy}
+                    onclick={() => void importFontFolder()}
+                    class="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-md border border-[var(--app-border)] bg-[var(--app-surface-elevated)] hover:bg-[var(--app-surface-hover)] disabled:opacity-50"
+                  >
+                    <FolderOpen size={14} /> Import folder
+                  </button>
+                  <button
+                    type="button"
+                    disabled={fontCfgBusy}
+                    onclick={() => void importFontFiles()}
+                    class="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-md border border-[var(--app-border)] bg-[var(--app-surface-elevated)] hover:bg-[var(--app-surface-hover)] disabled:opacity-50"
+                  >
+                    <FileType size={14} /> Import files
+                  </button>
+                </div>
               </div>
-              {#if fontConfig.directories.length === 0}
-                <p class="text-xs text-[var(--app-fg-muted)]">No folders — only bundled fonts.</p>
-              {:else}
-                <ul class="space-y-1.5">
-                  {#each fontConfig.directories as dir, i}
-                    <li
-                      class="flex items-start gap-2 text-xs font-mono break-all text-[var(--app-fg-secondary)] bg-[var(--app-surface)] rounded px-2 py-1.5 border border-[var(--app-border)]"
-                    >
-                      <span class="flex-1 min-w-0">{dir}</span>
-                      <button
-                        type="button"
-                        disabled={fontCfgBusy}
-                        onclick={() => void removeDir(i)}
-                        class="shrink-0 p-1 rounded hover:bg-[var(--app-surface-hover)] text-[var(--app-fg-muted)]"
-                        title="Remove"
-                      >
-                        <Trash2 size={14} />
-                      </button>
-                    </li>
-                  {/each}
-                </ul>
-              {/if}
-            </div>
-
-            <div class="rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)] p-4 space-y-3">
-              <div class="flex items-center justify-between gap-2 flex-wrap">
-                <span class="text-[10px] uppercase tracking-wider text-[var(--app-fg-muted)]"
-                  >Individual font files</span
-                >
-                <button
-                  type="button"
-                  disabled={fontCfgBusy}
-                  onclick={() => void addFontFiles()}
-                  class="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-md border border-[var(--app-border)] bg-[var(--app-surface-elevated)] hover:bg-[var(--app-surface-hover)] disabled:opacity-50"
-                >
-                  <FileType size={14} /> Add files
-                </button>
-              </div>
+              <p class="text-[11px] text-[var(--app-fg-muted)] leading-relaxed">
+                All matching <code class="text-[var(--app-fg-secondary)]">.ttf</code> /
+                <code class="text-[var(--app-fg-secondary)]">.otf</code> /
+                <code class="text-[var(--app-fg-secondary)]">.ttc</code> /
+                <code class="text-[var(--app-fg-secondary)]">.otc</code> files are copied recursively from a
+                folder.
+              </p>
               {#if fontConfig.files.length === 0}
-                <p class="text-xs text-[var(--app-fg-muted)]">No extra files.</p>
+                <p class="text-xs text-[var(--app-fg-muted)]">No imported fonts yet.</p>
               {:else}
-                <ul class="space-y-1.5 max-h-40 overflow-y-auto">
+                <ul class="space-y-1.5 max-h-48 overflow-y-auto">
                   {#each fontConfig.files as file, i}
                     <li
-                      class="flex items-start gap-2 text-xs font-mono break-all text-[var(--app-fg-secondary)] bg-[var(--app-surface)] rounded px-2 py-1.5 border border-[var(--app-border)]"
+                      class="flex items-start gap-2 text-xs text-[var(--app-fg-secondary)] bg-[var(--app-surface)] rounded px-2 py-1.5 border border-[var(--app-border)]"
                     >
-                      <span class="flex-1 min-w-0">{file}</span>
+                      <span class="flex-1 min-w-0 font-medium truncate" title={file}
+                        >{displayFontPath(file)}</span
+                      >
+                      <span class="hidden sm:block flex-1 min-w-0 font-mono text-[10px] break-all opacity-70"
+                        >{file}</span
+                      >
                       <button
                         type="button"
                         disabled={fontCfgBusy}
-                        onclick={() => void removeFile(i)}
+                        onclick={() => void removeImportedFile(i)}
                         class="shrink-0 p-1 rounded hover:bg-[var(--app-surface-hover)] text-[var(--app-fg-muted)]"
-                        title="Remove"
+                        title="Remove and delete copy"
                       >
                         <Trash2 size={14} />
                       </button>
@@ -366,15 +375,14 @@
                 onclick={() => void importFontConfigMerge()}
                 class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-md border border-[var(--app-border-strong)] bg-[var(--app-surface-elevated)] hover:bg-[var(--app-surface-hover)]"
               >
-                <Upload size={14} /> Import JSON (merge)
+                <Upload size={14} /> Import JSON (merge, copies fonts)
               </button>
             </div>
             <p class="text-[10px] text-[var(--app-fg-muted)] leading-relaxed">
-              Config is stored in the app config directory as
-              <code class="text-[var(--app-fg-secondary)]">typst-editor-fonts.json</code>. Merge import adds
-              directories and files from another JSON without removing existing entries.
+              Paths in <code class="text-[var(--app-fg-secondary)]">typst-editor-fonts.json</code> (app config)
+              only reference files inside import storage. JSON merge copies external paths into storage.
             </p>
-            {#if fontCfgError && (fontConfig.directories.length > 0 || fontConfig.files.length > 0)}
+            {#if fontCfgError && fontConfig.files.length > 0}
               <p class="text-red-400 text-xs">{fontCfgError}</p>
             {/if}
           </div>

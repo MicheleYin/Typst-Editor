@@ -2,7 +2,14 @@
   import { onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
   import { getVersion } from "@tauri-apps/api/app";
-  import { Settings, PanelLeft, PanelRight, FileDown, Loader2 } from "lucide-svelte";
+  import {
+    Settings,
+    PanelLeft,
+    PanelRight,
+    FileDown,
+    Loader2,
+    SquareTerminal,
+  } from "lucide-svelte";
   import pkg from "../../package.json";
   import CustomSelect from "./CustomSelect.svelte";
 
@@ -41,6 +48,7 @@
     showExportPdf = false,
     pdfExporting = false,
     onExportPdf,
+    onShowCommandPalette,
   } = $props<{
     appName: string;
     onShowShortcuts: () => void;
@@ -58,6 +66,7 @@
     showExportPdf?: boolean;
     pdfExporting?: boolean;
     onExportPdf?: () => void | Promise<void>;
+    onShowCommandPalette?: () => void;
   }>();
 
   function formatRelativeTime(date: Date | null | undefined) {
@@ -75,7 +84,7 @@
 </script>
 
 <header
-  class="h-auto py-2 bg-[var(--app-bg)] border-b border-[var(--app-border)] flex items-center px-4 gap-2 z-50 select-none"
+  class="h-auto py-2 bg-[var(--app-bg)] border-b border-[var(--app-border)] flex items-center px-4 gap-2 z-[80] select-none"
 >
   <div class="flex items-center gap-1 mr-4">
     <div
@@ -128,7 +137,9 @@
     {/if}
   </div>
 
-  <div class="ml-auto flex items-center gap-1 sm:gap-2">
+  <div
+    class="px-2 mx-auto flex min-w-0 flex-wrap items-center justify-end gap-x-1 gap-y-1 sm:gap-x-2"
+  >
     {#if showPanelToggles}
       <button
         type="button"
@@ -151,6 +162,16 @@
         aria-pressed={previewVisible}
       >
         <PanelRight size={18} />
+      </button>
+    {/if}
+    {#if onShowCommandPalette}
+      <button
+        type="button"
+        onclick={onShowCommandPalette}
+        class="p-1.5 rounded transition-colors text-[var(--app-fg-secondary)] hover:bg-[var(--app-btn-ghost-hover)] hover:text-[var(--app-link)]"
+        title="Command palette (Monaco)"
+      >
+        <SquareTerminal size={18} aria-hidden="true" />
       </button>
     {/if}
     {#if showExportPdf && onExportPdf}

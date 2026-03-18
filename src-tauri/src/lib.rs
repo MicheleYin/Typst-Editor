@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 use chrono::Datelike;
 use tauri::command;
+use tauri::path::BaseDirectory;
 use tauri::Manager;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::Emitter;
@@ -22,14 +23,18 @@ use typst_kit::package::PackageStorage;
 const TYPST_PACKAGES_CACHE_DIR: &str = "typst-packages";
 
 const FONT_CONFIG_FILE: &str = "typst-editor-fonts.json";
+/// Copied user fonts (App Store sandbox–safe).
+const FONT_USER_IMPORT_SUBDIR: &str = "typst-editor-fonts/imported";
+/// Shipped via `bundle.resources` (see `tauri.conf.json`); resolved under `resource_dir`.
+const APP_BUNDLED_FONTS_RESOURCE: &str = "resources/fonts/bundled";
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 struct TypstFontConfig {
-    /// Folders scanned recursively for `.ttf`, `.otf`, `.ttc`, `.otc`.
+    /// Legacy; migrated into `files` under app storage. Always empty after migration.
     #[serde(default)]
     directories: Vec<String>,
-    /// Individual font files to load.
+    /// Font files under `app_local_data/.../imported/` (absolute paths in container).
     #[serde(default)]
     files: Vec<String>,
 }
@@ -84,11 +89,139 @@ fn walk_font_files(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
-/// Bundled fonts from `typst-assets` (New Computer Modern, etc.).
-fn bundled_font_faces() -> Vec<Font> {
+/// Fonts from `typst-assets` (New Computer Modern, etc.).
+fn bundled_typst_font_faces() -> Vec<Font> {
     typst_assets::fonts()
         .filter_map(|data| Font::new(Bytes::new(data.to_vec()), 0))
         .collect()
+}
+
+fn user_font_import_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .app_local_data_dir()
+        .map(|p| p.join(FONT_USER_IMPORT_SUBDIR))
+        .map_err(|e| e.to_string())
+}
+
+fn app_bundled_fonts_resource_dir(app: &tauri::AppHandle) -> Option<PathBuf> {
+    let d = app
+        .path()
+        .resolve(APP_BUNDLED_FONTS_RESOURCE, BaseDirectory::Resource)
+        .ok()?;
+    d.is_dir().then_some(d)
+}
+
+fn unique_dest_in_dir(dir: &Path, orig_name: &str) -> Result<PathBuf, String> {
+    let candidate = dir.join(orig_name);
+    if !candidate.exists() {
+        return Ok(candidate);
+    }
+    let path = Path::new(orig_name);
+    let stem = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("font");
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("ttf");
+    for i in 1u32..10_000 {
+        let cand = dir.join(format!("{stem}_{i}.{ext}"));
+        if !cand.exists() {
+            return Ok(cand);
+        }
+    }
+    Err("could not pick unique font file name".into())
+}
+
+fn copy_font_into_user_storage(src: &Path, import_dir: &Path) -> Result<PathBuf, String> {
+    let name = src
+        .file_name()
+        .ok_or_else(|| "font path has no file name".to_string())?;
+    let dest = unique_dest_in_dir(import_dir, &name.to_string_lossy())?;
+    fs::copy(src, &dest).map_err(|e| format!("copy font: {e}"))?;
+    Ok(dest)
+}
+
+/// One-time / upgrade migration: copy fonts from arbitrary paths into app local data.
+fn migrate_font_config_to_local_storage(app: &tauri::AppHandle) -> Result<(), String> {
+    let import_dir = user_font_import_dir(app)?;
+    fs::create_dir_all(&import_dir).map_err(|e| e.to_string())?;
+    let import_canon = fs::canonicalize(&import_dir).unwrap_or_else(|_| import_dir.clone());
+
+    let mut config = load_typst_font_config(app);
+    let needs_migrate = !config.directories.is_empty()
+        || config.files.iter().any(|f| {
+            let p = PathBuf::from(f);
+            if !p.is_file() || !is_font_extension(&p) {
+                return false;
+            }
+            fs::canonicalize(&p)
+                .map(|c| !c.starts_with(&import_canon))
+                .unwrap_or(true)
+        });
+
+    if !needs_migrate {
+        config.files.retain(|f| {
+            let p = PathBuf::from(f);
+            p.is_file() && is_font_extension(&p)
+        });
+        config.directories.clear();
+        save_typst_font_config(app, &config)?;
+        return Ok(());
+    }
+
+    let mut new_files: Vec<String> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+
+    for f in &config.files {
+        let p = PathBuf::from(f);
+        if !p.is_file() || !is_font_extension(&p) {
+            continue;
+        }
+        let dest = match fs::canonicalize(&p) {
+            Ok(c) if c.starts_with(&import_canon) => c,
+            _ => copy_font_into_user_storage(&p, &import_dir)?,
+        };
+        let ds = dest.to_string_lossy().into_owned();
+        if seen.insert(ds.clone()) {
+            new_files.push(ds);
+        }
+    }
+    for d in &config.directories {
+        let base = PathBuf::from(d);
+        if !base.is_dir() {
+            continue;
+        }
+        let mut found = Vec::new();
+        walk_font_files(&base, &mut found);
+        for p in found {
+            if let Ok(dest) = copy_font_into_user_storage(&p, &import_dir) {
+                let ds = dest.to_string_lossy().into_owned();
+                if seen.insert(ds.clone()) {
+                    new_files.push(ds);
+                }
+            }
+        }
+    }
+
+    new_files.sort();
+    new_files.dedup();
+    config.files = new_files;
+    config.directories.clear();
+    save_typst_font_config(app, &config)?;
+    Ok(())
+}
+
+fn collect_app_bundle_font_paths(app: &tauri::AppHandle) -> Vec<PathBuf> {
+    let Some(dir) = app_bundled_fonts_resource_dir(app) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    walk_font_files(&dir, &mut out);
+    out.sort();
+    out.dedup();
+    out
 }
 
 /// Load every face from font files on disk.
@@ -106,36 +239,32 @@ fn fonts_from_paths(paths: &[PathBuf]) -> Vec<(PathBuf, Font)> {
     v
 }
 
-fn collect_user_font_paths(config: &TypstFontConfig) -> Vec<PathBuf> {
-    let mut paths = Vec::new();
-    for d in &config.directories {
-        let p = PathBuf::from(d);
-        if p.is_dir() {
-            walk_font_files(&p, &mut paths);
-        }
-    }
-    for f in &config.files {
-        let p = PathBuf::from(f);
-        if p.is_file() && is_font_extension(&p) {
-            paths.push(p);
-        }
-    }
+fn collect_imported_font_paths(config: &TypstFontConfig) -> Vec<PathBuf> {
+    let mut paths: Vec<PathBuf> = config
+        .files
+        .iter()
+        .map(PathBuf::from)
+        .filter(|p| p.is_file() && is_font_extension(p))
+        .collect();
     paths.sort();
     paths.dedup();
     paths
 }
 
-/// All font faces: bundled first, then user files.
+/// typst-assets → app `resources/fonts/bundled` → user imports (local data).
 fn all_world_fonts(app: &tauri::AppHandle) -> Vec<Font> {
+    let mut fonts: Vec<Font> = bundled_typst_font_faces();
+    let n_typst = fonts.len();
+    let app_paths = collect_app_bundle_font_paths(app);
+    let app_pairs = fonts_from_paths(&app_paths);
+    let n_app = app_pairs.len();
+    fonts.extend(app_pairs.into_iter().map(|(_, f)| f));
     let config = load_typst_font_config(app);
-    let disk_paths = collect_user_font_paths(&config);
-    let user = fonts_from_paths(&disk_paths);
+    let user_paths = collect_imported_font_paths(&config);
+    let user = fonts_from_paths(&user_paths);
     let n_user = user.len();
-    let bundled = bundled_font_faces();
-    let n_bundled = bundled.len();
-    let mut fonts: Vec<Font> = bundled;
     fonts.extend(user.into_iter().map(|(_, f)| f));
-    eprintln!("typst-editor: {n_bundled} bundled + {n_user} user font faces");
+    eprintln!("typst-editor: {n_typst} typst-assets + {n_app} app-bundled + {n_user} imported faces");
     fonts
 }
 
@@ -499,22 +628,55 @@ struct TypstFontFaceJson {
     family: String,
     variant: String,
     source_path: Option<String>,
-    bundled: bool,
+    /// New Computer Modern etc. from `typst-assets` (no disk path).
+    bundled_typst: bool,
+    /// From `bundle.resources` → `fonts/bundled`.
+    bundled_app: bool,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TypstFontStorageInfo {
+    imported_dir: String,
+    /// Resolved resource path when present (dev may be missing if folder empty).
+    app_bundled_fonts_dir: Option<String>,
+}
+
+#[command]
+fn get_typst_font_storage_info(app: tauri::AppHandle) -> Result<TypstFontStorageInfo, String> {
+    Ok(TypstFontStorageInfo {
+        imported_dir: user_font_import_dir(&app)?.to_string_lossy().into_owned(),
+        app_bundled_fonts_dir: app_bundled_fonts_resource_dir(&app)
+            .map(|p| p.to_string_lossy().into_owned()),
+    })
 }
 
 #[command]
 fn list_typst_font_faces(app: tauri::AppHandle) -> Result<Vec<TypstFontFaceJson>, String> {
     let config = load_typst_font_config(&app);
-    let disk_paths = collect_user_font_paths(&config);
-    let user_pairs = fonts_from_paths(&disk_paths);
+    let user_paths = collect_imported_font_paths(&config);
+    let user_pairs = fonts_from_paths(&user_paths);
+    let app_paths = collect_app_bundle_font_paths(&app);
+    let app_pairs = fonts_from_paths(&app_paths);
     let mut out: Vec<TypstFontFaceJson> = Vec::new();
-    for f in bundled_font_faces() {
+    for f in bundled_typst_font_faces() {
         let info = f.info();
         out.push(TypstFontFaceJson {
             family: info.family.as_str().to_string(),
             variant: format!("{:?}", info.variant),
             source_path: None,
-            bundled: true,
+            bundled_typst: true,
+            bundled_app: false,
+        });
+    }
+    for (path, f) in app_pairs {
+        let info = f.info();
+        out.push(TypstFontFaceJson {
+            family: info.family.as_str().to_string(),
+            variant: format!("{:?}", info.variant),
+            source_path: Some(path.to_string_lossy().into_owned()),
+            bundled_typst: false,
+            bundled_app: true,
         });
     }
     for (path, f) in user_pairs {
@@ -523,7 +685,8 @@ fn list_typst_font_faces(app: tauri::AppHandle) -> Result<Vec<TypstFontFaceJson>
             family: info.family.as_str().to_string(),
             variant: format!("{:?}", info.variant),
             source_path: Some(path.to_string_lossy().into_owned()),
-            bundled: false,
+            bundled_typst: false,
+            bundled_app: false,
         });
     }
     Ok(out)
@@ -536,24 +699,150 @@ fn get_typst_font_config(app: tauri::AppHandle) -> Result<TypstFontConfig, Strin
 
 #[command]
 fn set_typst_font_config(app: tauri::AppHandle, config: TypstFontConfig) -> Result<(), String> {
-    save_typst_font_config(&app, &config)
+    let import_dir = user_font_import_dir(&app)?;
+    let import_canon = fs::canonicalize(&import_dir).unwrap_or(import_dir);
+    let mut sanitized = TypstFontConfig::default();
+    for f in config.files {
+        let p = PathBuf::from(&f);
+        if !p.is_file() || !is_font_extension(&p) {
+            continue;
+        }
+        if let Ok(c) = fs::canonicalize(&p) {
+            if c.starts_with(&import_canon) {
+                sanitized.files.push(f);
+            }
+        }
+    }
+    save_typst_font_config(&app, &sanitized)
+}
+
+#[command]
+fn add_typst_fonts_import(
+    app: tauri::AppHandle,
+    paths: Vec<String>,
+    from_folder: bool,
+) -> Result<TypstFontConfig, String> {
+    let import_dir = user_font_import_dir(&app)?;
+    fs::create_dir_all(&import_dir).map_err(|e| e.to_string())?;
+    let import_canon = fs::canonicalize(&import_dir).unwrap_or_else(|_| import_dir.clone());
+    let mut config = load_typst_font_config(&app);
+
+    if from_folder {
+        for dir in paths {
+            let p = PathBuf::from(&dir);
+            if !p.is_dir() {
+                continue;
+            }
+            let mut found = Vec::new();
+            walk_font_files(&p, &mut found);
+            for f in found {
+                if let Ok(dest) = copy_font_into_user_storage(&f, &import_dir) {
+                    let ds = dest.to_string_lossy().into_owned();
+                    if !config.files.contains(&ds) {
+                        config.files.push(ds);
+                    }
+                }
+            }
+        }
+    } else {
+        for f in paths {
+            let p = PathBuf::from(&f);
+            if !p.is_file() || !is_font_extension(&p) {
+                continue;
+            }
+            let ds = if fs::canonicalize(&p)
+                .map(|c| c.starts_with(&import_canon))
+                .unwrap_or(false)
+            {
+                fs::canonicalize(&p)
+                    .map(|c| c.to_string_lossy().into_owned())
+                    .unwrap_or_else(|_| p.to_string_lossy().into_owned())
+            } else {
+                copy_font_into_user_storage(&p, &import_dir)?
+                    .to_string_lossy()
+                    .into_owned()
+            };
+            if !config.files.contains(&ds) {
+                config.files.push(ds);
+            }
+        }
+    }
+    config.directories.clear();
+    config.files.sort();
+    config.files.dedup();
+    save_typst_font_config(&app, &config)?;
+    Ok(config)
+}
+
+#[command]
+fn remove_typst_imported_font(app: tauri::AppHandle, path: String) -> Result<TypstFontConfig, String> {
+    let import_dir = user_font_import_dir(&app)?;
+    let import_canon = fs::canonicalize(&import_dir).map_err(|e| e.to_string())?;
+    let p = PathBuf::from(&path);
+    let canon = fs::canonicalize(&p).map_err(|e| e.to_string())?;
+    if !canon.starts_with(&import_canon) {
+        return Err("path is not under the app font import folder".into());
+    }
+    let _ = fs::remove_file(&canon);
+    let mut config = load_typst_font_config(&app);
+    config.files.retain(|f| {
+        fs::canonicalize(f)
+            .map(|c| c != canon)
+            .unwrap_or(true)
+    });
+    save_typst_font_config(&app, &config)?;
+    Ok(config)
 }
 
 #[command]
 fn import_typst_font_config_json(app: tauri::AppHandle, json_path: String) -> Result<TypstFontConfig, String> {
     let s = fs::read_to_string(&json_path).map_err(|e| e.to_string())?;
     let imported: TypstFontConfig = serde_json::from_str(&s).map_err(|e| e.to_string())?;
+    let import_dir = user_font_import_dir(&app)?;
+    fs::create_dir_all(&import_dir).map_err(|e| e.to_string())?;
+    let import_canon = fs::canonicalize(&import_dir).unwrap_or_else(|_| import_dir.clone());
     let mut cur = load_typst_font_config(&app);
+
     for d in imported.directories {
-        if !cur.directories.contains(&d) {
-            cur.directories.push(d);
+        let base = PathBuf::from(&d);
+        if !base.is_dir() {
+            continue;
+        }
+        let mut found = Vec::new();
+        walk_font_files(&base, &mut found);
+        for p in found {
+            if let Ok(dest) = copy_font_into_user_storage(&p, &import_dir) {
+                let ds = dest.to_string_lossy().into_owned();
+                if !cur.files.contains(&ds) {
+                    cur.files.push(ds);
+                }
+            }
         }
     }
     for f in imported.files {
-        if !cur.files.contains(&f) {
-            cur.files.push(f);
+        let p = PathBuf::from(&f);
+        if !p.is_file() || !is_font_extension(&p) {
+            continue;
+        }
+        let ds = if fs::canonicalize(&p)
+            .map(|c| c.starts_with(&import_canon))
+            .unwrap_or(false)
+        {
+            fs::canonicalize(&p)
+                .map(|c| c.to_string_lossy().into_owned())
+                .unwrap_or_else(|_| p.to_string_lossy().into_owned())
+        } else if let Ok(dest) = copy_font_into_user_storage(&p, &import_dir) {
+            dest.to_string_lossy().into_owned()
+        } else {
+            continue;
+        };
+        if !cur.files.contains(&ds) {
+            cur.files.push(ds);
         }
     }
+    cur.directories.clear();
+    cur.files.sort();
+    cur.files.dedup();
     save_typst_font_config(&app, &cur)?;
     Ok(cur)
 }
@@ -570,8 +859,15 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                .build(),
+        )
         .setup(|app| {
             let handle = app.handle();
+            if let Err(e) = migrate_font_config_to_local_storage(&handle) {
+                eprintln!("typst-editor: font config migration: {e}");
+            }
             let app_menu_title = handle.package_info().name.clone();
             
             // File Menu
@@ -598,7 +894,9 @@ pub fn run() {
                 ],
             )?;
 
-            // Edit Menu
+            // Edit Menu — Select All is custom so it reaches Monaco (native predefined does not in WKWebView).
+            let edit_select_all =
+                MenuItem::with_id(handle, "edit-select-all", "Select All", true, Some("CmdOrCtrl+A"))?;
             let edit_menu = Submenu::with_items(
                 handle,
                 "Edit",
@@ -610,7 +908,7 @@ pub fn run() {
                     &PredefinedMenuItem::cut(handle, None)?,
                     &PredefinedMenuItem::copy(handle, None)?,
                     &PredefinedMenuItem::paste(handle, None)?,
-                    &PredefinedMenuItem::select_all(handle, None)?,
+                    &edit_select_all,
                 ],
             )?;
 
@@ -700,6 +998,9 @@ pub fn run() {
             get_typst_font_config,
             set_typst_font_config,
             import_typst_font_config_json,
+            get_typst_font_storage_info,
+            add_typst_fonts_import,
+            remove_typst_imported_font,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

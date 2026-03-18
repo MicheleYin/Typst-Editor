@@ -15,7 +15,8 @@
     "fs:allow-exists",
     "fs:allow-read-dir",
     "core:event:allow-listen",
-    "core:event:allow-emit"
+    "core:event:allow-emit",
+    "window-state:default"
 
 
 

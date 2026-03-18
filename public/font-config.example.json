@@ -1,9 +1,4 @@
 {
-  "directories": [
-    "/path/to/a/folder/of/fonts"
-  ],
-  "files": [
-    "/path/to/OneFont.ttf",
-    "/path/to/Another.otf"
-  ]
+  "directories": ["/path/to/fonts-to-copy-into-app-storage"],
+  "files": ["/path/to/OneFont.ttf"]
 }

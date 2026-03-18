@@ -622,15 +622,32 @@
         case "help-fonts":
           openSettings("fonts");
           break;
+        case "edit-select-all": {
+          const ed = editor;
+          const ae = document.activeElement as HTMLElement | null;
+          const inMonaco = ae?.closest?.(".monaco-editor") != null;
+          if (inMonaco && ed) {
+            ed.getAction("editor.action.selectAll")?.run();
+          } else if (ae instanceof HTMLInputElement || ae instanceof HTMLTextAreaElement) {
+            ae.select();
+          } else if (ae?.isContentEditable) {
+            const sel = document.getSelection();
+            const range = document.createRange();
+            range.selectNodeContents(ae);
+            sel?.removeAllRanges();
+            sel?.addRange(range);
+          } else if (ed) {
+            ed.focus();
+            ed.getAction("editor.action.selectAll")?.run();
+          }
+          break;
+        }
         default:
-          console.log(
-            "[typst-editor:menu] unhandled menu id (Edit predefined actions like Select All usually bypass this):",
-            id,
-          );
+          console.log("[typst-editor:menu] unhandled menu id:", id);
       }
     });
 
-    /** Debug: native Edit → Select All uses OS responder chain, not menu-event. */
+    /** Debug: selection logging */
     let selectDebugTimer: ReturnType<typeof setTimeout> | undefined;
     const logSelectionState = (reason: string) => {
       const ae = document.activeElement as HTMLElement | null;
@@ -733,6 +750,14 @@
     showExportPdf={!isLandingPage}
     {pdfExporting}
     onExportPdf={handleExportPdf}
+    onShowCommandPalette={!isLandingPage
+      ? () => {
+          const ed = editor;
+          if (!ed) return;
+          ed.focus();
+          ed.trigger("keyboard", "editor.action.quickCommand", null);
+        }
+      : undefined}
   />
 
   <SettingsModal

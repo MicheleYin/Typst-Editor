@@ -48,17 +48,25 @@
   let startX = 0;
   let startY = 0;
 
-  let pinchActive = $state(false);
-  let lastPinchDist = 0;
+  const SCALE_MIN = 0.25;
+  const SCALE_MAX = 6;
+  const ZOOM_DEBUG = false;
 
-  /** One-finger touch pan (avoids browser scroll fighting the transform). */
+  let pinchActive = $state(false);
+  let pinchScaleStart = 1;
+  let pinchDistStart = 1;
+  /** EMA-smoothed pinch span (reduces slow-pinch jitter). */
+  let pinchDistFiltered = 1;
+  let pinchLastRawD = 1;
+  let pinchMoveLogCounter = 0;
+
+  /** One-finger touch pan */
   let touchPanning = $state(false);
   let touchPanId = -1;
   let panTouchStartX = 0;
   let panTouchStartY = 0;
   let panStartTX = 0;
   let panStartTY = 0;
-
   function touchDistance(t: TouchList): number {
     if (t.length < 2) return 0;
     const dx = t[0].clientX - t[1].clientX;
@@ -66,30 +74,70 @@
     return Math.hypot(dx, dy);
   }
 
-  function touchCenter(t: TouchList): { x: number; y: number } {
-    return {
-      x: (t[0].clientX + t[1].clientX) / 2,
-      y: (t[0].clientY + t[1].clientY) / 2,
-    };
-  }
-
   let contentEl = $state<HTMLElement | null>(null);
+  let viewportEl = $state<HTMLElement | null>(null);
 
-  /** Zoom toward a viewport point (pinch midpoint or pointer); anchor = visual center (browser-like). */
-  function zoomTowardPoint(focalX: number, focalY: number, ratio: number) {
-    if (ratio <= 0 || !Number.isFinite(ratio)) return;
-    const newScale = Math.min(5, Math.max(0.1, scale * ratio));
-    const k = newScale / scale;
-    if (Math.abs(k - 1) < 1e-6) return;
-    const el = contentEl;
-    if (el) {
-      const r = el.getBoundingClientRect();
-      const ox = r.left + r.width / 2;
-      const oy = r.top + r.height / 2;
-      translateX += (focalX - ox) * (1 - k);
-      translateY += (focalY - oy) * (1 - k);
+  /** Zoom in/out toward the center of the preview pane (like browser image zoom). */
+  function setScaleFromViewportCenter(nextScale: number, reason = "viewportCenter") {
+    const s = Math.min(SCALE_MAX, Math.max(SCALE_MIN, nextScale));
+    const prevScale = scale;
+    const prevTx = translateX;
+    const prevTy = translateY;
+    if (Math.abs(s - prevScale) < 1e-6) {
+      if (ZOOM_DEBUG) {
+        console.log("[SvgPreview zoom] skip (no change)", { reason, scale: prevScale });
+      }
+      return;
     }
-    scale = newScale;
+    const pane = viewportEl;
+    const el = contentEl;
+    let fx = 0;
+    let fy = 0;
+    let ox = 0;
+    let oy = 0;
+    let k = 1;
+    if (pane && el) {
+      const pr = pane.getBoundingClientRect();
+      fx = pr.left + pr.width / 2;
+      fy = pr.top + pr.height / 2;
+      const r = el.getBoundingClientRect();
+      ox = r.left + r.width / 2;
+      oy = r.top + r.height / 2;
+      k = s / prevScale;
+      const dtx = (fx - ox) * (1 - k);
+      const dty = (fy - oy) * (1 - k);
+      translateX += dtx;
+      translateY += dty;
+      if (ZOOM_DEBUG) {
+        console.log("[SvgPreview zoom]", reason, {
+          scale: { from: prevScale, to: s, k },
+          translate: {
+            from: [prevTx, prevTy],
+            to: [translateX, translateY],
+            delta: [translateX - prevTx, translateY - prevTy],
+          },
+          pane: { w: pr.width, h: pr.height, fx, fy },
+          content: {
+            w: r.width,
+            h: r.height,
+            ox,
+            oy,
+            // offset of content center from pane center (before pan delta)
+            offsetFromPaneCenter: [ox - fx, oy - fy],
+          },
+        });
+      }
+    } else {
+      if (ZOOM_DEBUG) {
+        console.warn("[SvgPreview zoom] no pane/content rect — translate unchanged", {
+          reason,
+          hadPane: !!pane,
+          hadContent: !!el,
+          scale: { from: prevScale, to: s },
+        });
+      }
+    }
+    scale = s;
   }
 
   function touchById(t: TouchList, id: number): Touch | undefined {
@@ -107,8 +155,20 @@
     if (e.touches.length >= 2) {
       touchPanning = false;
       pinchActive = true;
-      lastPinchDist = touchDistance(e.touches);
-      if (lastPinchDist < 8) lastPinchDist = 8;
+      pinchScaleStart = scale;
+      pinchDistStart = Math.max(touchDistance(e.touches), 10);
+      pinchDistFiltered = pinchDistStart;
+      pinchLastRawD = pinchDistStart;
+      pinchMoveLogCounter = 0;
+      if (ZOOM_DEBUG) {
+        console.log("[SvgPreview pinch] start", {
+          pinchScaleStart,
+          pinchDistStart,
+          scale,
+          translateX,
+          translateY,
+        });
+      }
       e.preventDefault();
     } else if (e.touches.length === 1) {
       const p = e.touches[0];
@@ -126,12 +186,35 @@
 
     if (e.touches.length >= 2 && pinchActive) {
       e.preventDefault();
-      const d = touchDistance(e.touches);
-      if (d < 2 || lastPinchDist < 2) return;
-      const ratio = d / lastPinchDist;
-      const { x, y } = touchCenter(e.touches);
-      zoomTowardPoint(x, y, ratio);
-      lastPinchDist = d;
+      const rawD = Math.max(touchDistance(e.touches), 1);
+      const dd = Math.abs(rawD - pinchLastRawD);
+      pinchLastRawD = rawD;
+      // More smoothing when per-frame change is tiny (slow pinch noise); snap up when moving on purpose.
+      const alpha =
+        dd < 0.75 ? 0.07 : dd < 2.5 ? 0.22 : dd < 10 ? 0.48 : 0.78;
+      pinchDistFiltered = alpha * rawD + (1 - alpha) * pinchDistFiltered;
+      const prevScale = scale;
+      const next = Math.min(
+        SCALE_MAX,
+        Math.max(
+          SCALE_MIN,
+          pinchScaleStart * (pinchDistFiltered / pinchDistStart),
+        ),
+      );
+      scale = next;
+      pinchMoveLogCounter += 1;
+      if (ZOOM_DEBUG && (pinchMoveLogCounter <= 3 || pinchMoveLogCounter % 6 === 0)) {
+        console.log("[SvgPreview pinch] move", {
+          n: pinchMoveLogCounter,
+          rawD,
+          pinchDistFiltered,
+          distRatio: pinchDistFiltered / pinchDistStart,
+          alpha,
+          scale: { from: prevScale, to: next },
+          translateX,
+          translateY,
+        });
+      }
       return;
     }
 
@@ -144,7 +227,24 @@
   }
 
   function onTouchEndGestures(e: TouchEvent) {
+    if (e.touches.length < 2 && pinchActive && ZOOM_DEBUG) {
+      console.log("[SvgPreview pinch] end (finger lifted)", {
+        remainingTouches: e.touches.length,
+        scale,
+        translateX,
+        translateY,
+      });
+    }
     if (e.touches.length < 2) pinchActive = false;
+    if (e.touches.length === 1 && pages[currentPage]) {
+      const p = e.touches[0];
+      touchPanning = true;
+      touchPanId = p.identifier;
+      panTouchStartX = p.clientX;
+      panTouchStartY = p.clientY;
+      panStartTX = translateX;
+      panStartTY = translateY;
+    }
     if (e.touches.length === 0) {
       touchPanning = false;
       touchPanId = -1;
@@ -157,9 +257,16 @@
   function onWheelPreview(e: WheelEvent) {
     if (!e.ctrlKey || !pages[currentPage]) return;
     e.preventDefault();
-    const delta = -e.deltaY * 0.012;
-    const factor = Math.exp(delta);
-    zoomTowardPoint(e.clientX, e.clientY, factor);
+    const factor = Math.exp(-e.deltaY * 0.01);
+    if (ZOOM_DEBUG) {
+      console.log("[SvgPreview wheel] ctrl+wheel", {
+        deltaY: e.deltaY,
+        deltaMode: e.deltaMode,
+        factor,
+        scaleBefore: scale,
+      });
+    }
+    setScaleFromViewportCenter(scale * factor, "wheel");
   }
 
   /** Non-passive touch + wheel so pinch/zoom can preventDefault (browser zoom / overscroll). */
@@ -180,10 +287,6 @@
       },
     };
   }
-
-  const transformInteracting = $derived(
-    isPanning || pinchActive || touchPanning,
-  );
 
   function startPan(e: MouseEvent) {
     if (!pages[currentPage] || e.button !== 0) return;
@@ -213,14 +316,19 @@
   }
 
   function previewZoomIn() {
-    scale = Math.min(scale + 0.1, 5);
+    if (ZOOM_DEBUG) console.log("[SvgPreview] zoomIn button", { scale });
+    setScaleFromViewportCenter(scale * 1.2, "zoomIn");
   }
 
   function previewZoomOut() {
-    scale = Math.max(scale - 0.1, 0.1);
+    if (ZOOM_DEBUG) console.log("[SvgPreview] zoomOut button", { scale });
+    setScaleFromViewportCenter(scale / 1.2, "zoomOut");
   }
 
   function resetPreviewZoom() {
+    if (ZOOM_DEBUG) {
+      console.log("[SvgPreview] reset", { scale, translateX, translateY });
+    }
     scale = 1;
     translateX = 0;
     translateY = 0;
@@ -382,6 +490,7 @@
       </div>
 
       <div
+        bind:this={viewportEl}
         class="w-full h-full flex flex-col items-center overflow-hidden p-12 min-h-0"
         style:touch-action="none"
         use:previewGestures
@@ -389,9 +498,7 @@
         <div
           bind:this={contentEl}
           style:transform="translate3d({translateX}px, {translateY}px, 0) scale({scale})"
-          class="bg-white shadow-[0_0_50px_rgba(0,0,0,0.1)] rounded-sm min-w-[300px] shrink-0 origin-center {transformInteracting
-            ? 'will-change-transform'
-            : 'transition-transform duration-100 ease-out'}"
+          class="bg-white shadow-[0_0_50px_rgba(0,0,0,0.1)] rounded-sm min-w-[300px] shrink-0 origin-center will-change-transform transition-none [backface-visibility:hidden]"
         >
           {@html pages[currentPage]}
         </div>

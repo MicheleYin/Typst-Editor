@@ -23,11 +23,15 @@
   type LiveRow = TypstFontFace & { group: string };
 
   const liveRows = $derived.by((): LiveRow[] => {
-    const bundled = faces.filter((f) => f.bundled);
-    const user = faces.filter((f) => !f.bundled);
+    const typst = faces.filter((f: TypstFontFace) => f.bundledTypst);
+    const app = faces.filter((f: TypstFontFace) => f.bundledApp);
+    const imported = faces.filter(
+      (f: TypstFontFace) => !f.bundledTypst && !f.bundledApp,
+    );
     const rows: LiveRow[] = [
-      ...bundled.map((f) => ({ ...f, group: "Bundled with Typst" })),
-      ...user.map((f) => ({ ...f, group: "Your imported fonts" })),
+      ...typst.map((f: TypstFontFace) => ({ ...f, group: "Bundled with Typst" })),
+      ...app.map((f: TypstFontFace) => ({ ...f, group: "Bundled with app" })),
+      ...imported.map((f: TypstFontFace) => ({ ...f, group: "Imported (app storage)" })),
     ];
     return rows;
   });
@@ -63,7 +67,7 @@
   );
 
   function previewFamilyForLive(f: TypstFontFace): string {
-    if (f.sourcePath) return `'${pickerFaceCssId(f)}', sans-serif`;
+    if (f.sourcePath && !f.bundledTypst) return `'${pickerFaceCssId(f)}', sans-serif`;
     const fam = f.family.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
     return `"${fam}", ui-serif, serif`;
   }
@@ -93,7 +97,7 @@
 
   $effect(() => {
     if (!open || !useLiveCatalog) return;
-    const withPath = faces.filter((f) => f.sourcePath);
+    const withPath = faces.filter((f: TypstFontFace) => f.sourcePath);
     if (withPath.length === 0 || typeof document === "undefined") return;
     let style = document.getElementById("typst-editor-font-picker-faces") as HTMLStyleElement | null;
     if (!style) {
@@ -105,7 +109,7 @@
       try {
         const { convertFileSrc } = await import("@tauri-apps/api/core");
         style!.textContent = withPath
-          .map((f) => {
+          .map((f: TypstFontFace) => {
             const id = pickerFaceCssId(f);
             const url = convertFileSrc(f.sourcePath!);
             return `@font-face{font-family:'${id}';src:url("${url}") format("opentype"),url("${url}") format("truetype");font-display:swap;}`;
@@ -183,8 +187,8 @@
         />
         {#if useLiveCatalog}
           <p class="mt-1.5 text-[10px] text-[var(--app-fg-muted)] leading-snug">
-            Bundled + imported fonts are loaded by the Typst engine. Add folders or files in Settings →
-            Fonts.
+            Bundled, app-shipped, and imported fonts are loaded by Typst. Import fonts in Settings → Fonts
+            (copied into app storage for sandboxing).
           </p>
         {:else}
           <p class="mt-1.5 text-[10px] text-[var(--app-fg-muted)] leading-snug">
