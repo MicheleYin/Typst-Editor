@@ -4,7 +4,7 @@
   import * as monaco from "monaco-editor";
   import { listen } from "@tauri-apps/api/event";
   import { GripVertical } from "lucide-svelte";
-  import { open, save } from "@tauri-apps/plugin-dialog";
+  import { open, save, message } from "@tauri-apps/plugin-dialog";
   import { readTextFile, writeTextFile, readDir } from "@tauri-apps/plugin-fs";
   import Header from "./components/Header.svelte";
   import Sidebar from "./components/Sidebar.svelte";
@@ -12,6 +12,7 @@
   import InitialPage from "./components/InitialPage.svelte";
   import SvgPreview from "./components/SvgPreview.svelte";
   import MonacoEditorPane from "./components/MonacoEditorPane.svelte";
+  import EditorQuickActions from "./components/EditorQuickActions.svelte";
   import {
     syncAppShortcuts,
     applyMonacoShortcutOverrides,
@@ -20,14 +21,19 @@
   } from "./lib/shortcuts";
   import { fetchAppDisplayName, defaultNewFileContent } from "./lib/appMeta";
   import {
-    readStoredThemePreference,
-    persistThemePreference,
-    THEME_PREFERENCE_OPTIONS,
-    resolveAppearance,
-    resolveMonacoThemeId,
-    isValidThemePreference,
-    type ThemePreference,
+    readStoredColorMode,
+    persistColorMode,
+    COLOR_MODE_OPTIONS,
+    resolveEffectiveLightDark,
+    type ColorMode,
   } from "./lib/monacoThemes";
+  import {
+    applyAppChromeFromVscodeColors,
+    CAT_LIGHT_COLORS,
+    CAT_DARK_COLORS,
+    MONACO_THEME_ID_LIGHT,
+    MONACO_THEME_ID_DARK,
+  } from "./lib/catppuccinAltThemes";
   import pkg from "../package.json";
 
   let appName = $state(pkg.name);
@@ -54,6 +60,7 @@
     trace: { message: string; line: number | null; column: number | null; file: string | null }[];
   };
   let compileDiagnostics = $state<CompileDiagnostic[]>([]);
+  let pdfExporting = $state(false);
 
   let previewPages = $derived(
     compileDiagnostics.length > 0 && lastValidPages.length > 0
@@ -105,23 +112,24 @@
       ? window.matchMedia("(prefers-color-scheme: dark)").matches
       : true,
   );
-  let themePreference = $state<ThemePreference>(readStoredThemePreference());
-  let resolvedAppearance = $derived(
-    resolveAppearance(themePreference, systemPrefersDark),
+  let colorMode = $state<ColorMode>(readStoredColorMode());
+  let effectiveLightDark = $derived(
+    resolveEffectiveLightDark(colorMode, systemPrefersDark),
   );
   let monacoThemeResolved = $derived(
-    resolveMonacoThemeId(themePreference, systemPrefersDark),
+    effectiveLightDark === "dark" ? MONACO_THEME_ID_DARK : MONACO_THEME_ID_LIGHT,
   );
 
-  function handleThemePreferenceChange(id: string) {
-    if (!isValidThemePreference(id)) return;
-    themePreference = id;
-    persistThemePreference(id);
+  function handleColorModeChange(id: string) {
+    if (id !== "auto" && id !== "light" && id !== "dark") return;
+    colorMode = id as ColorMode;
+    persistColorMode(colorMode);
   }
 
   $effect(() => {
-    if (typeof document === "undefined") return;
-    document.documentElement.dataset.appAppearance = resolvedAppearance;
+    applyAppChromeFromVscodeColors(
+      effectiveLightDark === "dark" ? CAT_DARK_COLORS : CAT_LIGHT_COLORS,
+    );
   });
 
   let scale = $state(1);
@@ -344,6 +352,37 @@
     }
   }
 
+  async function handleExportPdf() {
+    if (pdfExporting) return;
+    pdfExporting = true;
+    try {
+      const defaultPath = currentFilePath
+        ? currentFilePath.replace(/\.typ$/i, "") + ".pdf"
+        : "document.pdf";
+      const path = await save({
+        defaultPath,
+        filters: [{ name: "PDF", extensions: ["pdf"] }],
+      });
+      if (path === null) return;
+      await invoke("export_typst_pdf", {
+        content,
+        mainPath: currentFilePath ?? null,
+        outputPath: path,
+      });
+      await message(`PDF saved successfully.`, {
+        title: "Export PDF",
+        kind: "info",
+      });
+    } catch (e) {
+      await message(String(e), {
+        title: "PDF export failed",
+        kind: "error",
+      });
+    } finally {
+      pdfExporting = false;
+    }
+  }
+
   $effect(() => {
     const text = content;
     const pathSnapshot = currentFilePath;
@@ -556,6 +595,9 @@
         case "file-save-as":
           handleSaveAs();
           break;
+        case "file-export-pdf":
+          void handleExportPdf();
+          break;
         case "view-zoom-in":
           appZoomIn();
           break;
@@ -671,9 +713,9 @@
   <Header
     {appName}
     onShowShortcuts={() => openSettings("shortcuts")}
-    {themePreference}
-    onThemePreferenceChange={handleThemePreferenceChange}
-    themePreferenceOptions={THEME_PREFERENCE_OPTIONS}
+    {colorMode}
+    onColorModeChange={handleColorModeChange}
+    colorModeOptions={COLOR_MODE_OPTIONS}
     filePath={currentFilePath}
     isDirty={currentFileDirty}
     lastSaved={currentFileLastSaved}
@@ -682,6 +724,9 @@
     onToggleSidebar={() => (sidebarVisible = !sidebarVisible)}
     {previewVisible}
     onTogglePreview={() => (previewVisible = !previewVisible)}
+    showExportPdf={!isLandingPage}
+    {pdfExporting}
+    onExportPdf={handleExportPdf}
   />
 
   <SettingsModal
@@ -716,8 +761,8 @@
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div
         onmousedown={handleSidebarGripMouseDown}
-        class="w-1 cursor-col-resize bg-[var(--app-grip)] hover:bg-blue-500 transition-colors shrink-0 flex items-center justify-center z-10 relative group {isResizingSidebar
-          ? 'bg-blue-600'
+        class="w-1 cursor-col-resize bg-[var(--app-grip)] hover:bg-[var(--app-grip-hover)] transition-colors shrink-0 flex items-center justify-center z-10 relative group {isResizingSidebar
+          ? 'bg-[var(--app-grip-active)]'
           : ''}"
         title="Drag to resize sidebar"
       >
@@ -741,26 +786,29 @@
           ? 'min-h-0'
           : 'flex-1 min-h-0'}"
       >
-        <MonacoEditorPane
-          initialValue={content}
-          {appZoom}
-          monacoTheme={monacoThemeResolved}
-          onContentChange={onEditorContentChange}
-          onReady={(ed) => {
-            editor = ed;
-          }}
-          onDispose={() => {
-            editor = undefined;
-          }}
-        />
+        <EditorQuickActions editor={editor} />
+        <div class="flex-1 min-h-0 min-w-0 flex flex-col">
+          <MonacoEditorPane
+            initialValue={content}
+            {appZoom}
+            monacoTheme={monacoThemeResolved}
+            onContentChange={onEditorContentChange}
+            onReady={(ed) => {
+              editor = ed;
+            }}
+            onDispose={() => {
+              editor = undefined;
+            }}
+          />
+        </div>
       </div>
 
       {#if previewVisible}
         <!-- svelte-ignore a11y_no_static_element_interactions -->
         <div
           onmousedown={handleEditorSplitMouseDown}
-          class="w-1 cursor-col-resize bg-[var(--app-grip)] hover:bg-blue-500 transition-colors flex items-center justify-center z-10 relative group shrink-0 {isResizing
-            ? 'bg-blue-600'
+          class="w-1 cursor-col-resize bg-[var(--app-grip)] hover:bg-[var(--app-grip-hover)] transition-colors flex items-center justify-center z-10 relative group shrink-0 {isResizing
+            ? 'bg-[var(--app-grip-active)]'
             : ''}"
         >
           <div

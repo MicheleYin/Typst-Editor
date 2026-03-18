@@ -7,19 +7,24 @@
     ensureAppShortcutMetadataInStore,
     disposeAllShortcutBindings,
   } from "../lib/shortcuts";
+  import {
+    MONACO_CAT_LIGHT,
+    MONACO_CAT_DARK,
+    MONACO_THEME_ID_LIGHT,
+    MONACO_THEME_ID_DARK,
+  } from "../lib/catppuccinAltThemes";
 
   let {
     initialValue,
     appZoom,
-    monacoTheme = "vs-dark",
+    monacoTheme,
     onContentChange,
     onReady,
     onDispose,
   } = $props<{
     initialValue: string;
     appZoom: number;
-    /** Monaco built-in theme id: vs, vs-dark, hc-black, hc-light */
-    monacoTheme?: string;
+    monacoTheme: string;
     onContentChange: (value: string) => void;
     onReady: (editor: monaco.editor.IStandaloneCodeEditor) => void;
     onDispose?: () => void;
@@ -50,6 +55,9 @@
         monaco.languages.setLanguageConfiguration("typst", typstLanguage.conf);
         typstRegistered = true;
       }
+
+      monaco.editor.defineTheme(MONACO_THEME_ID_LIGHT, MONACO_CAT_LIGHT);
+      monaco.editor.defineTheme(MONACO_THEME_ID_DARK, MONACO_CAT_DARK);
 
       ed = monaco.editor.create(host, {
         value: initialValue,
@@ -106,4 +114,4 @@
   });
 </script>
 
-<div bind:this={host} class="h-full w-full min-h-0"></div>
+<div bind:this={host} class="h-full w-full min-h-0 flex-1"></div>

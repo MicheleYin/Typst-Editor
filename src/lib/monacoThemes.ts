@@ -1,94 +1,52 @@
-/** Built-in Monaco editor themes (VS Code–compatible). */
-export const MONACO_THEME_OPTIONS = [
-  { id: "vs-dark", label: "Dark" },
-  { id: "vs", label: "Light" },
-  { id: "hc-black", label: "High contrast dark" },
-  { id: "hc-light", label: "High contrast light" },
-] as const;
+export const COLOR_MODE_AUTO = "auto" as const;
+export const COLOR_MODE_LIGHT = "light" as const;
+export const COLOR_MODE_DARK = "dark" as const;
 
-export type MonacoThemeId = (typeof MONACO_THEME_OPTIONS)[number]["id"];
+export type ColorMode =
+  | typeof COLOR_MODE_AUTO
+  | typeof COLOR_MODE_LIGHT
+  | typeof COLOR_MODE_DARK;
 
-export const THEME_AUTO = "auto" as const;
-export type ThemePreference = typeof THEME_AUTO | MonacoThemeId;
-
-/** Header / storage: Auto first, then fixed themes */
-export const THEME_PREFERENCE_OPTIONS: { id: ThemePreference; label: string }[] = [
-  { id: THEME_AUTO, label: "Auto (system)" },
-  { id: "vs-dark", label: "Dark" },
-  { id: "vs", label: "Light" },
-  { id: "hc-black", label: "High contrast dark" },
-  { id: "hc-light", label: "High contrast light" },
+export const COLOR_MODE_OPTIONS: { id: ColorMode; label: string }[] = [
+  { id: COLOR_MODE_AUTO, label: "Auto" },
+  { id: COLOR_MODE_LIGHT, label: "Light" },
+  { id: COLOR_MODE_DARK, label: "Dark" },
 ];
 
-export type AppAppearance = "dark" | "light" | "hc-dark" | "hc-light";
+const STORAGE_KEY = "typst-editor-color-mode";
 
-const LEGACY_MONACO_KEY = "typst-editor-monaco-theme";
-const PREFERENCE_KEY = "typst-editor-theme-preference";
-
-const VALID_MONACO = new Set<string>(MONACO_THEME_OPTIONS.map((t) => t.id));
-
-export function isValidMonacoTheme(id: string): id is MonacoThemeId {
-  return VALID_MONACO.has(id);
+/** Migrate old theme preference keys to light / dark / auto */
+export function readStoredColorMode(): ColorMode {
+  try {
+    const v = localStorage.getItem(STORAGE_KEY);
+    if (v === COLOR_MODE_AUTO || v === COLOR_MODE_LIGHT || v === COLOR_MODE_DARK) {
+      return v;
+    }
+    const legacy = localStorage.getItem("typst-editor-theme-preference");
+    if (legacy === "auto" || !legacy) return COLOR_MODE_AUTO;
+    if (legacy === "vs" || legacy === "hc-light") return COLOR_MODE_LIGHT;
+    if (legacy === "vs-dark" || legacy === "hc-black") return COLOR_MODE_DARK;
+    if (legacy.startsWith("vscode-")) return COLOR_MODE_AUTO;
+  } catch {
+    /* ignore */
+  }
+  return COLOR_MODE_AUTO;
 }
 
-function monacoToAppearance(id: MonacoThemeId): AppAppearance {
-  switch (id) {
-    case "vs":
-      return "light";
-    case "vs-dark":
-      return "dark";
-    case "hc-black":
-      return "hc-dark";
-    case "hc-light":
-      return "hc-light";
+export function persistColorMode(mode: ColorMode): void {
+  try {
+    localStorage.setItem(STORAGE_KEY, mode);
+  } catch {
+    /* ignore */
   }
 }
 
-/** Resolved UI + Monaco when preference is Auto */
-export function resolveAppearance(
-  pref: ThemePreference,
+export function resolveEffectiveLightDark(
+  mode: ColorMode,
   systemPrefersDark: boolean,
-): AppAppearance {
-  if (pref === THEME_AUTO) {
+): "light" | "dark" {
+  if (mode === COLOR_MODE_AUTO) {
     return systemPrefersDark ? "dark" : "light";
   }
-  return monacoToAppearance(pref);
-}
-
-export function resolveMonacoThemeId(
-  pref: ThemePreference,
-  systemPrefersDark: boolean,
-): MonacoThemeId {
-  if (pref === THEME_AUTO) {
-    return systemPrefersDark ? "vs-dark" : "vs";
-  }
-  return pref;
-}
-
-export function readStoredThemePreference(): ThemePreference {
-  try {
-    const v = localStorage.getItem(PREFERENCE_KEY);
-    if (v === THEME_AUTO) return THEME_AUTO;
-    if (v && isValidMonacoTheme(v)) return v;
-    const legacy = localStorage.getItem(LEGACY_MONACO_KEY);
-    if (legacy && isValidMonacoTheme(legacy)) return legacy;
-  } catch {
-    /* ignore */
-  }
-  return THEME_AUTO;
-}
-
-export function persistThemePreference(pref: ThemePreference): void {
-  try {
-    localStorage.setItem(PREFERENCE_KEY, pref);
-    if (pref !== THEME_AUTO) {
-      localStorage.setItem(LEGACY_MONACO_KEY, pref);
-    }
-  } catch {
-    /* ignore */
-  }
-}
-
-export function isValidThemePreference(id: string): id is ThemePreference {
-  return id === THEME_AUTO || isValidMonacoTheme(id);
+  return mode;
 }

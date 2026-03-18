@@ -2,7 +2,7 @@
   import { onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
   import { getVersion } from "@tauri-apps/api/app";
-  import { Settings, PanelLeft, PanelRight } from "lucide-svelte";
+  import { Settings, PanelLeft, PanelRight, FileDown, Loader2 } from "lucide-svelte";
   import pkg from "../../package.json";
 
   let editorVersion = $state("");
@@ -26,9 +26,9 @@
   let {
     appName,
     onShowShortcuts,
-    themePreference = "auto",
-    onThemePreferenceChange,
-    themePreferenceOptions = [],
+    colorMode = "auto",
+    onColorModeChange,
+    colorModeOptions = [],
     filePath = null,
     isDirty = false,
     lastSaved = null,
@@ -37,12 +37,15 @@
     previewVisible = true,
     onTogglePreview,
     showPanelToggles = true,
+    showExportPdf = false,
+    pdfExporting = false,
+    onExportPdf,
   } = $props<{
     appName: string;
     onShowShortcuts: () => void;
-    themePreference?: string;
-    onThemePreferenceChange?: (pref: string) => void;
-    themePreferenceOptions?: { id: string; label: string }[];
+    colorMode?: string;
+    onColorModeChange?: (mode: string) => void;
+    colorModeOptions?: { id: string; label: string }[];
     filePath?: string | null;
     isDirty?: boolean;
     lastSaved?: Date | null;
@@ -51,6 +54,9 @@
     previewVisible?: boolean;
     onTogglePreview: () => void;
     showPanelToggles?: boolean;
+    showExportPdf?: boolean;
+    pdfExporting?: boolean;
+    onExportPdf?: () => void | Promise<void>;
   }>();
 
   function formatRelativeTime(date: Date | null | undefined) {
@@ -71,8 +77,11 @@
   class="h-10 bg-[var(--app-bg)] border-b border-[var(--app-border)] flex items-center px-4 gap-2 z-50 select-none"
 >
   <div class="flex items-center gap-1 mr-4">
-    <div class="w-6 h-6 bg-blue-600 rounded flex items-center justify-center">
-      <span class="text-[10px] font-bold text-white">T</span>
+    <div
+      class="w-6 h-6 rounded flex items-center justify-center shadow-sm"
+      style="background: var(--app-header-badge-bg); color: var(--app-header-badge-fg);"
+    >
+      <span class="text-[10px] font-bold">T</span>
     </div>
     <span class="text-xs font-semibold text-[var(--app-fg-secondary)]">{appName}</span>
   </div>
@@ -90,9 +99,12 @@
             class="flex items-center gap-1.5 pl-1 border-l border-[var(--app-chip-divider)] ml-1"
           >
             <div
-              class="w-1.5 h-1.5 bg-blue-500 rounded-full animate-pulse shadow-[0_0_8px_rgba(59,130,246,0.5)]"
+              class="w-1.5 h-1.5 rounded-full animate-pulse"
+              style="background: var(--app-status-edited-dot); box-shadow: 0 0 8px var(--app-status-edited-glow);"
             ></div>
-            <span class="text-[10px] uppercase font-bold tracking-wider text-blue-400"
+            <span
+              class="text-[10px] uppercase font-bold tracking-wider"
+              style="color: var(--app-status-edited-text);"
               >Edited</span
             >
           </div>
@@ -101,10 +113,12 @@
             class="flex items-center gap-1.5 pl-1 border-l border-[var(--app-chip-divider)] ml-1"
           >
             <div
-              class="w-1.5 h-1.5 bg-emerald-500 rounded-full shadow-[0_0_8px_rgba(16,185,129,0.3)]"
+              class="w-1.5 h-1.5 rounded-full"
+              style="background: var(--app-status-saved-dot); box-shadow: 0 0 8px var(--app-status-saved-glow);"
             ></div>
             <span
-              class="text-[10px] uppercase font-bold tracking-wider text-emerald-500 opacity-80"
+              class="text-[10px] uppercase font-bold tracking-wider opacity-90"
+              style="color: var(--app-status-saved-text);"
               >Saved {formatRelativeTime(lastSaved)}</span
             >
           </div>
@@ -138,16 +152,32 @@
         <PanelRight size={18} />
       </button>
     {/if}
-    {#if themePreferenceOptions.length > 0 && onThemePreferenceChange}
-      <label class="sr-only" for="app-theme-select">Appearance</label>
-      <select
-        id="app-theme-select"
-        class="max-w-40 text-[11px] bg-[var(--app-chip-bg)] border border-[var(--app-border-strong)] text-[var(--app-fg)] rounded px-1.5 py-1 cursor-pointer hover:opacity-90 focus:outline-none focus:ring-1 focus:ring-blue-500"
-        title="Theme: editor + app follow this. Auto matches system light/dark."
-        value={themePreference}
-        onchange={(e) => onThemePreferenceChange(e.currentTarget.value)}
+    {#if showExportPdf && onExportPdf}
+      <button
+        type="button"
+        onclick={() => void onExportPdf()}
+        disabled={pdfExporting}
+        class="p-1.5 rounded transition-colors flex items-center justify-center min-w-[2.25rem] disabled:opacity-50 disabled:pointer-events-none text-[var(--app-fg-secondary)] hover:bg-[var(--app-btn-ghost-hover)] hover:text-[var(--app-link)]"
+        title={pdfExporting ? "Exporting PDF…" : "Export PDF"}
+        aria-busy={pdfExporting}
       >
-        {#each themePreferenceOptions as opt (opt.id)}
+        {#if pdfExporting}
+          <Loader2 size={18} class="animate-spin text-[var(--app-link)]" aria-hidden="true" />
+        {:else}
+          <FileDown size={18} aria-hidden="true" />
+        {/if}
+      </button>
+    {/if}
+    {#if colorModeOptions.length > 0 && onColorModeChange}
+      <label class="sr-only" for="color-mode-select">Color mode</label>
+      <select
+        id="color-mode-select"
+        class="max-w-32 text-[11px] bg-[var(--app-chip-bg)] border border-[var(--app-border-strong)] text-[var(--app-fg)] rounded px-1.5 py-1 cursor-pointer hover:opacity-90 focus:outline-none focus:ring-1 focus:ring-[var(--app-link)]"
+        title="Light / dark Catppuccin-style theme. Auto follows system."
+        value={colorMode}
+        onchange={(e) => onColorModeChange(e.currentTarget.value)}
+      >
+        {#each colorModeOptions as opt (opt.id)}
           <option value={opt.id}>{opt.label}</option>
         {/each}
       </select>

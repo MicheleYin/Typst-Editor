@@ -27,6 +27,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 typst = "0.14.2"
 typst-svg = "0.14.2"
+typst-pdf = "0.14.2"
 typst-assets = { version = "0.14.2", features = ["fonts"] }
 typst-kit = { version = "0.14.2", default-features = true }
 comemo = "0.5.1"

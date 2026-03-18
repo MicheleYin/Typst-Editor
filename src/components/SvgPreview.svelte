@@ -214,30 +214,32 @@
           </button>
         </div>
 
-        <button
-          type="button"
-          onclick={previewZoomIn}
-          class="p-2 bg-[var(--preview-floating-bg)] hover:opacity-95 text-[var(--preview-floating-text)] rounded-lg shadow-lg border border-[var(--preview-floating-border)] transition-all active:scale-95 group"
-          title="Zoom In"
-        >
-          <ZoomIn size={20} class="group-hover:text-blue-600" />
-        </button>
-        <button
-          type="button"
-          onclick={previewZoomOut}
-          class="p-2 bg-[var(--preview-floating-bg)] hover:opacity-95 text-[var(--preview-floating-text)] rounded-lg shadow-lg border border-[var(--preview-floating-border)] transition-all active:scale-95 group"
-          title="Zoom Out"
-        >
-          <ZoomOut size={20} class="group-hover:text-blue-600" />
-        </button>
-        <button
-          type="button"
-          onclick={resetPreviewZoom}
-          class="p-2 bg-[var(--preview-floating-bg)] hover:opacity-95 text-[var(--preview-floating-text)] rounded-lg shadow-lg border border-[var(--preview-floating-border)] transition-all active:scale-95 group"
-          title="Reset Zoom"
-        >
-          <RotateCcw size={20} class="group-hover:text-blue-600" />
-        </button>
+        <div class="flex flex-col gap-2 w-fit self-end">
+          <button
+            type="button"
+            onclick={previewZoomIn}
+            class="p-2 bg-[var(--preview-floating-bg)] hover:opacity-95 text-[var(--preview-floating-text)] rounded-lg shadow-lg border border-[var(--preview-floating-border)] transition-all active:scale-95 group inline-flex items-center justify-center"
+            title="Zoom In"
+          >
+            <ZoomIn size={20} class="group-hover:text-blue-600" />
+          </button>
+          <button
+            type="button"
+            onclick={previewZoomOut}
+            class="p-2 bg-[var(--preview-floating-bg)] hover:opacity-95 text-[var(--preview-floating-text)] rounded-lg shadow-lg border border-[var(--preview-floating-border)] transition-all active:scale-95 group inline-flex items-center justify-center"
+            title="Zoom Out"
+          >
+            <ZoomOut size={20} class="group-hover:text-blue-600" />
+          </button>
+          <button
+            type="button"
+            onclick={resetPreviewZoom}
+            class="p-2 bg-[var(--preview-floating-bg)] hover:opacity-95 text-[var(--preview-floating-text)] rounded-lg shadow-lg border border-[var(--preview-floating-border)] transition-all active:scale-95 group inline-flex items-center justify-center"
+            title="Reset Zoom"
+          >
+            <RotateCcw size={20} class="group-hover:text-blue-600" />
+          </button>
+        </div>
       </div>
 
       <div class="w-full h-full flex flex-col items-center overflow-auto p-12">

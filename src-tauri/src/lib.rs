@@ -14,6 +14,7 @@ use typst::syntax::{FileId, Source, Span, VirtualPath};
 use typst::text::{Font, FontBook};
 use typst::utils::LazyHash;
 use typst::{Library, LibraryExt, World, WorldExt};
+use typst_pdf::{pdf, PdfOptions};
 use typst_kit::download::{Downloader, ProgressSink};
 use typst_kit::package::PackageStorage;
 
@@ -333,6 +334,49 @@ fn compile_typst(app: tauri::AppHandle, content: String, main_path: Option<Strin
     }
 }
 
+/// Compile current document to PDF and write bytes to `output_path`.
+#[command]
+fn export_typst_pdf(
+    app: tauri::AppHandle,
+    content: String,
+    main_path: Option<String>,
+    output_path: String,
+) -> Result<(), String> {
+    let package_cache = ensure_typst_package_cache(&app);
+    let world = EditorWorld::new(content, main_path, package_cache);
+    let warned = typst::compile::<PagedDocument>(&world);
+    let document = match warned.output {
+        Ok(doc) => doc,
+        Err(errs) => {
+            let msg = errs
+                .iter()
+                .map(|e| diagnostic_to_json(&world, e).message)
+                .collect::<Vec<_>>()
+                .join("\n");
+            return Err(if msg.is_empty() {
+                "Compilation failed.".into()
+            } else {
+                msg
+            });
+        }
+    };
+    let bytes = pdf(&document, &PdfOptions::default()).map_err(|errs| {
+        errs
+            .iter()
+            .map(|e| e.message.to_string())
+            .collect::<Vec<_>>()
+            .join("\n")
+    })?;
+    let out = PathBuf::from(output_path);
+    if let Some(parent) = out.parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+    }
+    fs::write(&out, bytes).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 /// Linked Typst compiler version from Cargo.lock (see `build.rs`).
 #[command]
 fn typst_engine_version() -> String {
@@ -355,6 +399,7 @@ pub fn run() {
             let open_folder = MenuItem::with_id(handle, "file-open-folder", "Open Folder...", true, Some("CmdOrCtrl+Shift+O"))?;
             let save_file = MenuItem::with_id(handle, "file-save", "Save", true, Some("CmdOrCtrl+S"))?;
             let save_as = MenuItem::with_id(handle, "file-save-as", "Save As...", true, Some("CmdOrCtrl+Shift+S"))?;
+            let export_pdf = MenuItem::with_id(handle, "file-export-pdf", "Export PDF…", true, Some("CmdOrCtrl+Shift+E"))?;
             
             let file_menu = Submenu::with_items(
                 handle,
@@ -367,6 +412,8 @@ pub fn run() {
                     &PredefinedMenuItem::separator(handle)?,
                     &save_file,
                     &save_as,
+                    &PredefinedMenuItem::separator(handle)?,
+                    &export_pdf,
                 ],
             )?;
 
@@ -462,6 +509,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             compile_typst,
+            export_typst_pdf,
             typst_engine_version,
             get_typst_package_cache_info,
             clear_typst_package_cache

@@ -14,6 +14,7 @@
     "@tauri-apps/plugin-dialog": "^2.6.0",
     "@tauri-apps/plugin-fs": "^2.4.5",
     "@tauri-apps/plugin-opener": "^2",
+    "jsonc-parser": "^3.3.1",
     "lucide-svelte": "^0.577.0",
     "monaco-editor": "^0.55.1",
     "svelte": "^5.53.12",
