@@ -136,40 +136,40 @@
   {/if}
 
   <div class="relative">
-    <Search size={16} class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" />
+    <Search size={16} class="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--app-fg-muted)]" />
     <input
       bind:value={searchQuery}
       type="text"
       placeholder="Search shortcuts..."
-      class="w-full bg-[#1e1e1e] border border-[#333] rounded px-10 py-2 text-sm focus:outline-none focus:border-blue-500 transition-colors"
+      class="w-full bg-[var(--app-input-bg)] border border-[var(--app-border)] rounded px-10 py-2 text-sm text-[var(--app-input-fg)] placeholder:text-[var(--app-fg-muted)] focus:outline-none focus:border-blue-500 transition-colors"
     />
   </div>
-  <div class="text-[11px] text-gray-500 flex flex-col gap-1">
+  <div class="text-[11px] text-[var(--app-fg-muted)] flex flex-col gap-1">
     <div class="flex items-center gap-2">
       <Keyboard size={14} />
       <span
-        >Click a keybinding to edit. For <strong class="text-gray-400">⌘K ⌘S</strong>-style
+        >Click a keybinding to edit. For <strong class="text-[var(--app-fg-secondary)]">⌘K ⌘S</strong>-style
         chords: press the first combo, then the second (or Enter after the first to keep a single
         shortcut). Backspace clears. Esc cancels.</span
       >
     </div>
   </div>
-  <div class="flex-1 overflow-auto border border-[#333] rounded-md">
-    <table class="w-full text-sm text-left border-collapse">
-      <thead class="bg-[#1e1e1e] sticky top-0 border-b border-[#333] z-10">
+  <div class="flex-1 overflow-auto border border-[var(--app-border)] rounded-md">
+    <table class="w-full text-sm text-left border-collapse text-[var(--app-fg)]">
+      <thead class="bg-[var(--app-input-bg)] sticky top-0 border-b border-[var(--app-border)] z-10">
         <tr>
-          <th class="px-4 py-2 font-medium text-gray-400 w-1/2">Command</th>
-          <th class="px-4 py-2 font-medium text-gray-400">Keybinding</th>
-          <th class="px-4 py-2 font-medium text-gray-400 w-16"></th>
+          <th class="px-4 py-2 font-medium text-[var(--app-fg-secondary)] w-1/2">Command</th>
+          <th class="px-4 py-2 font-medium text-[var(--app-fg-secondary)]">Keybinding</th>
+          <th class="px-4 py-2 font-medium text-[var(--app-fg-secondary)] w-16"></th>
         </tr>
       </thead>
-      <tbody class="divide-y divide-[#333]">
+      <tbody class="divide-y divide-[var(--app-border)]">
         {#each filteredShortcuts as shortcut}
-          <tr class="hover:bg-[#2d2d2d] group transition-colors">
+          <tr class="hover:bg-[var(--app-surface-elevated)] group transition-colors">
             <td class="px-4 py-3">
               <div class="flex flex-col">
-                <span class="text-gray-200">{shortcut.label}</span>
-                <span class="text-[10px] text-gray-500">{shortcut.category}</span>
+                <span class="text-[var(--app-fg)]">{shortcut.label}</span>
+                <span class="text-[10px] text-[var(--app-fg-muted)]">{shortcut.category}</span>
               </div>
             </td>
             <td class="px-4 py-3">
@@ -186,7 +186,7 @@
                   </button>
                   <button 
                     onclick={stopEditing}
-                    class="text-[10px] bg-[#333] hover:bg-[#444] px-2 py-1 rounded text-gray-300"
+                    class="text-[10px] bg-[var(--app-btn-ghost-hover)] hover:opacity-90 px-2 py-1 rounded text-[var(--app-fg)]"
                   >
                     Cancel
                   </button>
@@ -195,10 +195,10 @@
                 <!-- svelte-ignore a11y_click_events_have_key_events -->
                 <!-- svelte-ignore a11y_no_static_element_interactions -->
                 <div class="flex items-center gap-2 cursor-pointer" onclick={() => startEditing(shortcut.id)}>
-                  <div class="bg-[#333] px-2 py-1 rounded text-gray-300 font-mono text-xs min-h-[24px] min-w-[40px] flex items-center justify-center">
+                  <div class="bg-[var(--app-btn-ghost-hover)] px-2 py-1 rounded text-[var(--app-fg)] font-mono text-xs min-h-[24px] min-w-[40px] flex items-center justify-center">
                     {$shortcutOverrides[shortcut.id] ? formatKeys($shortcutOverrides[shortcut.id]) : (shortcut.displayKeys || "None")}
                   </div>
-                  <Edit2 size={12} class="text-gray-500 opacity-0 group-hover:opacity-100 transition-opacity" />
+                  <Edit2 size={12} class="text-[var(--app-fg-muted)] opacity-0 group-hover:opacity-100 transition-opacity" />
                 </div>
               {/if}
             </td>
@@ -206,7 +206,7 @@
               {#if $shortcutOverrides[shortcut.id]}
                 <button 
                   onclick={() => resetShortcut(shortcut.id)}
-                  class="p-1 hover:bg-[#444] rounded text-gray-500 hover:text-gray-300 transition-colors"
+                  class="p-1 hover:bg-[var(--app-surface-hover)] rounded text-[var(--app-fg-muted)] hover:text-[var(--app-fg)] transition-colors"
                   title="Reset to Default"
                 >
                   <RotateCcw size={14} />
@@ -217,7 +217,7 @@
         {/each}
         {#if filteredShortcuts.length === 0}
           <tr>
-            <td colspan="3" class="px-4 py-10 text-center text-gray-500">
+            <td colspan="3" class="px-4 py-10 text-center text-[var(--app-fg-muted)]">
               No shortcuts found matching "{searchQuery}"
             </td>
           </tr>

@@ -106,7 +106,7 @@
   onmouseup={stopPan}
 />
 
-<div class="h-full relative bg-gray-50 flex flex-col min-h-0">
+<div class="h-full relative bg-[var(--preview-pane-bg)] flex flex-col min-h-0">
   {#if error}
     <div
       class="shrink-0 px-3 py-2 bg-red-950/90 text-red-200 text-xs border-b border-red-800"
@@ -189,25 +189,25 @@
     {#if pageCount > 0 && pages[currentPage]}
       <div class="absolute bottom-6 right-6 flex flex-col gap-2 z-20">
         <div
-          class="flex items-center gap-1 bg-white/90 p-1 rounded-lg shadow-lg border border-gray-200 mb-2"
+          class="flex items-center gap-1 bg-[var(--preview-floating-bg)] p-1 rounded-lg shadow-lg border border-[var(--preview-floating-border)] mb-2"
         >
           <button
             type="button"
             onclick={prevPage}
             disabled={currentPage === 0}
-            class="p-1.5 hover:bg-gray-100 disabled:opacity-30 disabled:hover:bg-transparent rounded-md transition-colors text-gray-700"
+            class="p-1.5 hover:bg-[var(--preview-floating-hover)] disabled:opacity-30 disabled:hover:bg-transparent rounded-md transition-colors text-[var(--preview-floating-text)]"
             title="Previous Page"
           >
             <ChevronLeft size={18} />
           </button>
-          <div class="px-2 text-xs font-bold text-gray-800 tabular-nums">
+          <div class="px-2 text-xs font-bold text-[var(--preview-floating-text)] tabular-nums">
             {pageCount > 0 ? currentPage + 1 : 0} / {pageCount}
           </div>
           <button
             type="button"
             onclick={nextPage}
             disabled={currentPage >= pageCount - 1}
-            class="p-1.5 hover:bg-gray-100 disabled:opacity-30 disabled:hover:bg-transparent rounded-md transition-colors text-gray-700"
+            class="p-1.5 hover:bg-[var(--preview-floating-hover)] disabled:opacity-30 disabled:hover:bg-transparent rounded-md transition-colors text-[var(--preview-floating-text)]"
             title="Next Page"
           >
             <ChevronRight size={18} />
@@ -217,7 +217,7 @@
         <button
           type="button"
           onclick={previewZoomIn}
-          class="p-2 bg-white/90 hover:bg-white text-gray-800 rounded-lg shadow-lg border border-gray-200 transition-all active:scale-95 group"
+          class="p-2 bg-[var(--preview-floating-bg)] hover:opacity-95 text-[var(--preview-floating-text)] rounded-lg shadow-lg border border-[var(--preview-floating-border)] transition-all active:scale-95 group"
           title="Zoom In"
         >
           <ZoomIn size={20} class="group-hover:text-blue-600" />
@@ -225,7 +225,7 @@
         <button
           type="button"
           onclick={previewZoomOut}
-          class="p-2 bg-white/90 hover:bg-white text-gray-800 rounded-lg shadow-lg border border-gray-200 transition-all active:scale-95 group"
+          class="p-2 bg-[var(--preview-floating-bg)] hover:opacity-95 text-[var(--preview-floating-text)] rounded-lg shadow-lg border border-[var(--preview-floating-border)] transition-all active:scale-95 group"
           title="Zoom Out"
         >
           <ZoomOut size={20} class="group-hover:text-blue-600" />
@@ -233,7 +233,7 @@
         <button
           type="button"
           onclick={resetPreviewZoom}
-          class="p-2 bg-white/90 hover:bg-white text-gray-800 rounded-lg shadow-lg border border-gray-200 transition-all active:scale-95 group"
+          class="p-2 bg-[var(--preview-floating-bg)] hover:opacity-95 text-[var(--preview-floating-text)] rounded-lg shadow-lg border border-[var(--preview-floating-border)] transition-all active:scale-95 group"
           title="Reset Zoom"
         >
           <RotateCcw size={20} class="group-hover:text-blue-600" />
@@ -251,7 +251,7 @@
       </div>
     {:else}
       <div
-        class="absolute inset-0 flex items-center justify-center text-gray-400 text-sm p-8 text-center"
+        class="absolute inset-0 flex items-center justify-center text-[var(--preview-empty)] text-sm p-8 text-center"
       >
         {#if diagnostics.length > 0}
           No preview yet — fix the errors above, or keep editing.

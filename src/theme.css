@@ -3,15 +3,173 @@
 @theme {
   --color-brand-primary: #3b82f6;
   --color-brand-secondary: #6366f1;
-  
-  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-  
-  --shadow-premium: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
-  --shadow-premium-lg: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+
+  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    Helvetica, Arial, sans-serif;
+
+  --shadow-premium: 0 10px 15px -3px rgba(0, 0, 0, 0.1),
+    0 4px 6px -2px rgba(0, 0, 0, 0.05);
+  --shadow-premium-lg: 0 20px 25px -5px rgba(0, 0, 0, 0.1),
+    0 10px 10px -5px rgba(0, 0, 0, 0.04);
 }
 
+/* Defaults before JS sets data-app-appearance (match dark) */
 :root {
-  --background: #1e1e1e;
-  --foreground: #ffffff;
-  --sidebar-border: #333333;
+  --app-bg: #1e1e1e;
+  --app-fg: #e5e7eb;
+  --app-fg-secondary: #9ca3af;
+  --app-fg-muted: #6b7280;
+  --app-fg-subtle: #6b7280;
+  --app-border: #333333;
+  --app-border-strong: #444444;
+  --app-surface: #252526;
+  --app-surface-elevated: #2d2d2d;
+  --app-surface-hover: #2a2d2e;
+  --app-surface-active: #37373d;
+  --app-surface-toolbar: rgba(51, 51, 51, 0.35);
+  --app-btn-ghost-hover: #333333;
+  --app-input-bg: #1e1e1e;
+  --app-input-fg: #e5e7eb;
+  --app-chip-bg: #2d2d2d;
+  --app-chip-divider: #444444;
+  --app-grip: #333333;
+  --app-card-border: #3d3d3d;
+  --app-icon-muted: #6b7280;
+  --app-close-hover-fg: #ffffff;
+  --preview-pane-bg: #f9fafb;
+  --preview-floating-bg: rgba(255, 255, 255, 0.92);
+  --preview-floating-border: #e5e7eb;
+  --preview-floating-text: #1f2937;
+  --preview-floating-hover: #f3f4f6;
+  --preview-empty: #9ca3af;
+  --app-active-fg: #ffffff;
+  --app-link: #60a5fa;
+}
+
+html[data-app-appearance="dark"] {
+  --app-bg: #1e1e1e;
+  --app-fg: #e5e7eb;
+  --app-fg-secondary: #9ca3af;
+  --app-fg-muted: #6b7280;
+  --app-fg-subtle: #6b7280;
+  --app-border: #333333;
+  --app-border-strong: #444444;
+  --app-surface: #252526;
+  --app-surface-elevated: #2d2d2d;
+  --app-surface-hover: #2a2d2e;
+  --app-surface-active: #37373d;
+  --app-surface-toolbar: rgba(51, 51, 51, 0.35);
+  --app-btn-ghost-hover: #333333;
+  --app-input-bg: #1e1e1e;
+  --app-input-fg: #e5e7eb;
+  --app-chip-bg: #2d2d2d;
+  --app-chip-divider: #444444;
+  --app-grip: #333333;
+  --app-card-border: #3d3d3d;
+  --app-icon-muted: #6b7280;
+  --app-close-hover-fg: #ffffff;
+  --preview-pane-bg: #f4f4f5;
+  --preview-floating-bg: rgba(255, 255, 255, 0.92);
+  --preview-floating-border: #d1d5db;
+  --preview-floating-text: #1f2937;
+  --preview-floating-hover: #f3f4f6;
+  --preview-empty: #9ca3af;
+  --app-active-fg: #ffffff;
+  --app-link: #60a5fa;
+}
+
+html[data-app-appearance="light"] {
+  --app-bg: #e8e8e8;
+  --app-fg: #111827;
+  --app-fg-secondary: #4b5563;
+  --app-fg-muted: #6b7280;
+  --app-fg-subtle: #9ca3af;
+  --app-border: #c4c4c4;
+  --app-border-strong: #9ca3af;
+  --app-surface: #ffffff;
+  --app-surface-elevated: #f3f4f6;
+  --app-surface-hover: #e5e7eb;
+  --app-surface-active: #dbeafe;
+  --app-surface-toolbar: rgba(0, 0, 0, 0.06);
+  --app-btn-ghost-hover: #e5e7eb;
+  --app-input-bg: #ffffff;
+  --app-input-fg: #111827;
+  --app-chip-bg: #ffffff;
+  --app-chip-divider: #d1d5db;
+  --app-grip: #d1d5db;
+  --app-card-border: #d1d5db;
+  --app-icon-muted: #6b7280;
+  --app-close-hover-fg: #111827;
+  --preview-pane-bg: #f9fafb;
+  --preview-floating-bg: rgba(255, 255, 255, 0.95);
+  --preview-floating-border: #e5e7eb;
+  --preview-floating-text: #111827;
+  --preview-floating-hover: #f3f4f6;
+  --preview-empty: #6b7280;
+  --app-active-fg: #111827;
+  --app-link: #2563eb;
+}
+
+html[data-app-appearance="hc-dark"] {
+  --app-bg: #000000;
+  --app-fg: #ffffff;
+  --app-fg-secondary: #ffffff;
+  --app-fg-muted: #cccccc;
+  --app-fg-subtle: #aaaaaa;
+  --app-border: #ffffff;
+  --app-border-strong: #ffffff;
+  --app-surface: #000000;
+  --app-surface-elevated: #1a1a1a;
+  --app-surface-hover: #333333;
+  --app-surface-active: #ffffff;
+  --app-surface-toolbar: #1a1a1a;
+  --app-btn-ghost-hover: #333333;
+  --app-input-bg: #000000;
+  --app-input-fg: #ffffff;
+  --app-chip-bg: #000000;
+  --app-chip-divider: #ffffff;
+  --app-grip: #ffffff;
+  --app-card-border: #ffffff;
+  --app-icon-muted: #ffffff;
+  --app-close-hover-fg: #000000;
+  --preview-pane-bg: #000000;
+  --preview-floating-bg: #000000;
+  --preview-floating-border: #ffffff;
+  --preview-floating-text: #ffffff;
+  --preview-floating-hover: #333333;
+  --preview-empty: #ffffff;
+  --app-active-fg: #000000;
+  --app-link: #6ee7ff;
+}
+
+html[data-app-appearance="hc-light"] {
+  --app-bg: #ffffff;
+  --app-fg: #000000;
+  --app-fg-secondary: #000000;
+  --app-fg-muted: #000000;
+  --app-fg-subtle: #333333;
+  --app-border: #000000;
+  --app-border-strong: #000000;
+  --app-surface: #ffffff;
+  --app-surface-elevated: #f0f0f0;
+  --app-surface-hover: #e0e0e0;
+  --app-surface-active: #000000;
+  --app-surface-toolbar: #e8e8e8;
+  --app-btn-ghost-hover: #e0e0e0;
+  --app-input-bg: #ffffff;
+  --app-input-fg: #000000;
+  --app-chip-bg: #ffffff;
+  --app-chip-divider: #000000;
+  --app-grip: #000000;
+  --app-card-border: #000000;
+  --app-icon-muted: #000000;
+  --app-close-hover-fg: #ffffff;
+  --preview-pane-bg: #ffffff;
+  --preview-floating-bg: #ffffff;
+  --preview-floating-border: #000000;
+  --preview-floating-text: #000000;
+  --preview-floating-hover: #e8e8e8;
+  --preview-empty: #000000;
+  --app-active-fg: #ffffff;
+  --app-link: #0000ee;
 }

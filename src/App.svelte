@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, tick } from "svelte";
+  import { onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
   import * as monaco from "monaco-editor";
   import { listen } from "@tauri-apps/api/event";
@@ -8,8 +8,7 @@
   import { readTextFile, writeTextFile, readDir } from "@tauri-apps/plugin-fs";
   import Header from "./components/Header.svelte";
   import Sidebar from "./components/Sidebar.svelte";
-  import Modal from "./components/Modal.svelte";
-  import ShortcutEditor from "./components/ShortcutEditor.svelte";
+  import SettingsModal from "./components/SettingsModal.svelte";
   import InitialPage from "./components/InitialPage.svelte";
   import SvgPreview from "./components/SvgPreview.svelte";
   import MonacoEditorPane from "./components/MonacoEditorPane.svelte";
@@ -20,6 +19,15 @@
     type ShortcutAction,
   } from "./lib/shortcuts";
   import { fetchAppDisplayName, defaultNewFileContent } from "./lib/appMeta";
+  import {
+    readStoredThemePreference,
+    persistThemePreference,
+    THEME_PREFERENCE_OPTIONS,
+    resolveAppearance,
+    resolveMonacoThemeId,
+    isValidThemePreference,
+    type ThemePreference,
+  } from "./lib/monacoThemes";
   import pkg from "../package.json";
 
   let appName = $state(pkg.name);
@@ -69,40 +77,52 @@
     pageCount = 0;
     compileDiagnostics = [];
   });
-  const EDITOR_SPLIT_KEY = "typst-editor-editor-split-px";
-  /** Preferred minimum editor width when there is enough space */
-  const EDITOR_SPLIT_MIN = 200;
-  /** Allow editor to shrink this narrow so preview keeps min width */
-  const EDITOR_SPLIT_ABS_MIN = 72;
-  const PREVIEW_MIN_W = 280;
+  const SPLIT_RATIO_KEY = "typst-editor-editor-preview-ratio";
+  /** Minimum pane widths; above that, editor and preview share extra space by flex ratio (default 50/50). */
+  const EDITOR_PANE_MIN = 160;
+  const PREVIEW_PANE_MIN = 160;
   const SPLIT_GRIP_PX = 4;
   /** Matches layout: sidebar + editor/preview region needs at least this (web fallback; Tauri uses minWidth) */
-  const APP_MIN_WIDTH_PX = 760;
-  const APP_MIN_HEIGHT_PX = 480;
+  /** Sidebar + editor + grip + preview + mins need ~500px */
+  const APP_MIN_WIDTH_PX = 520;
+  const APP_MIN_HEIGHT_PX = 300;
 
-  function maxEditorPxForRegion(regionWidth: number): number {
-    return regionWidth - SPLIT_GRIP_PX - PREVIEW_MIN_W;
-  }
-
-  /** Shrink editor width if needed so preview column can stay at least PREVIEW_MIN_W */
-  function clampEditorSplitToRegion() {
-    if (!editorPreviewRegion || !previewVisible) return;
-    const maxEd = maxEditorPxForRegion(editorPreviewRegion.getBoundingClientRect().width);
-    if (editorWidthPx <= maxEd) return;
-    editorWidthPx = Math.round(Math.max(0, Math.min(editorWidthPx, maxEd)));
-  }
-  function readStoredEditorSplitPx(): number {
+  function readStoredSplitRatio(): number {
     try {
-      const v = parseInt(localStorage.getItem(EDITOR_SPLIT_KEY) ?? "", 10);
-      if (Number.isFinite(v) && v >= EDITOR_SPLIT_MIN) return v;
+      const v = parseFloat(localStorage.getItem(SPLIT_RATIO_KEY) ?? "");
+      if (Number.isFinite(v) && v >= 0.08 && v <= 0.92) return v;
     } catch {
       /* ignore */
     }
-    return 520;
+    return 0.5;
   }
-  let editorWidthPx = $state(readStoredEditorSplitPx());
+  /** Editor share of flex grow (0–1); preview gets (1 - ratio). Default 0.5 → equal split after mins. */
+  let splitRatio = $state(readStoredSplitRatio());
   let isResizing = $state(false);
   let editor = $state<monaco.editor.IStandaloneCodeEditor | undefined>(undefined);
+  let systemPrefersDark = $state(
+    typeof window !== "undefined"
+      ? window.matchMedia("(prefers-color-scheme: dark)").matches
+      : true,
+  );
+  let themePreference = $state<ThemePreference>(readStoredThemePreference());
+  let resolvedAppearance = $derived(
+    resolveAppearance(themePreference, systemPrefersDark),
+  );
+  let monacoThemeResolved = $derived(
+    resolveMonacoThemeId(themePreference, systemPrefersDark),
+  );
+
+  function handleThemePreferenceChange(id: string) {
+    if (!isValidThemePreference(id)) return;
+    themePreference = id;
+    persistThemePreference(id);
+  }
+
+  $effect(() => {
+    if (typeof document === "undefined") return;
+    document.documentElement.dataset.appAppearance = resolvedAppearance;
+  });
 
   let scale = $state(1);
   let translateX = $state(0);
@@ -130,6 +150,12 @@
   let mainLayout: HTMLDivElement | undefined = $state();
   let editorPreviewRegion: HTMLDivElement | undefined = $state();
   let isShortcutsModalOpen = $state(false);
+  let settingsInitialTab = $state<"shortcuts" | "packageCache">("shortcuts");
+
+  function openSettings(tab: "shortcuts" | "packageCache" = "shortcuts") {
+    settingsInitialTab = tab;
+    isShortcutsModalOpen = true;
+  }
   let appZoom = $state(1);
 
   let currentFileDirty = $derived(
@@ -284,7 +310,10 @@
         pages: string[];
         pageCount: number;
         diagnostics: CompileDiagnostic[];
-      }>("compile_typst", { content: text });
+      }>("compile_typst", {
+        content: text,
+        mainPath: pathSnapshot ?? null,
+      });
       if (currentFilePath !== pathSnapshot || content !== text) return;
       if (result.success) {
         pages = result.pages;
@@ -324,43 +353,22 @@
     return () => clearTimeout(timeoutId);
   });
 
-  /** Keep editor split valid when sidebar width or visibility changes */
-  $effect(() => {
-    sidebarVisible;
-    sidebarWidth;
-    previewVisible;
-    tick().then(() => clampEditorSplitToRegion());
-  });
-
-  /** When the editor+preview region resizes, shrink editor so preview keeps min width */
-  $effect(() => {
-    const el = editorPreviewRegion;
-    if (!el) return;
-    const ro = new ResizeObserver(() => {
-      clampEditorSplitToRegion();
-    });
-    ro.observe(el);
-    previewVisible;
-    clampEditorSplitToRegion();
-    return () => ro.disconnect();
-  });
-
   function handleEditorSplitResize(e: MouseEvent) {
     if (!isResizing || !editorPreviewRegion) return;
     const rect = editorPreviewRegion.getBoundingClientRect();
-    const maxEditor = maxEditorPxForRegion(rect.width);
-    if (maxEditor <= 0) return;
-    const lowWanted =
-      maxEditor >= EDITOR_SPLIT_MIN ? EDITOR_SPLIT_MIN : EDITOR_SPLIT_ABS_MIN;
-    const lo = Math.min(lowWanted, maxEditor);
+    const innerW = rect.width - SPLIT_GRIP_PX;
+    if (innerW <= 0) return;
+    const minR = EDITOR_PANE_MIN / innerW;
+    const maxR = 1 - PREVIEW_PANE_MIN / innerW;
+    if (minR >= maxR) return;
     const x = e.clientX - rect.left;
-    editorWidthPx = Math.round(Math.min(maxEditor, Math.max(lo, x)));
+    splitRatio = Math.min(maxR, Math.max(minR, x / innerW));
   }
 
   function handleSidebarResize(e: MouseEvent) {
     if (!isResizingSidebar || !mainLayout) return;
     const { left, width: totalW } = mainLayout.getBoundingClientRect();
-    const editorPreviewMin = PREVIEW_MIN_W + SPLIT_GRIP_PX + EDITOR_SPLIT_MIN;
+    const editorPreviewMin = SPLIT_GRIP_PX + EDITOR_PANE_MIN + PREVIEW_PANE_MIN;
     const max = Math.max(
       SIDEBAR_MIN,
       Math.min(SIDEBAR_MAX, totalW - editorPreviewMin),
@@ -392,7 +400,7 @@
     }
     if (wasEditorSplit && previewVisible) {
       try {
-        localStorage.setItem(EDITOR_SPLIT_KEY, String(editorWidthPx));
+        localStorage.setItem(SPLIT_RATIO_KEY, String(splitRatio));
       } catch {
         /* ignore */
       }
@@ -506,12 +514,19 @@
         sidebarVisible = !sidebarVisible;
         break;
       case "settings.shortcuts":
-        isShortcutsModalOpen = true;
+        openSettings("shortcuts");
         break;
     }
   }
 
   onMount(() => {
+    const mq = window.matchMedia("(prefers-color-scheme: dark)");
+    systemPrefersDark = mq.matches;
+    const onScheme = () => {
+      systemPrefersDark = mq.matches;
+    };
+    mq.addEventListener("change", onScheme);
+
     void (async () => {
       try {
         const n = await fetchAppDisplayName();
@@ -554,7 +569,10 @@
           sidebarVisible = !sidebarVisible;
           break;
         case "help-shortcuts":
-          isShortcutsModalOpen = true;
+          openSettings("shortcuts");
+          break;
+        case "help-package-cache":
+          openSettings("packageCache");
           break;
         default:
           console.log(
@@ -605,6 +623,7 @@
     window.addEventListener("shortcut-trigger", handleShortcutTrigger as EventListener);
 
     return () => {
+      mq.removeEventListener("change", onScheme);
       document.removeEventListener("selectionchange", onSelectionChange);
       if (selectDebugTimer) clearTimeout(selectDebugTimer);
       unlistenMenu.then((u) => u());
@@ -629,9 +648,7 @@
       },
       "view.nextPage": nextPage,
       "view.prevPage": prevPage,
-      "settings.shortcuts": () => {
-        isShortcutsModalOpen = true;
-      },
+      "settings.shortcuts": () => openSettings("shortcuts"),
     });
     applyMonacoShortcutOverrides(editor, monaco, o);
   });
@@ -643,7 +660,7 @@
 />
 
 <div
-  class="flex flex-col h-screen bg-[#1e1e1e] text-white overflow-hidden {isResizing ||
+  class="flex flex-col h-screen bg-[var(--app-bg)] text-[var(--app-fg)] overflow-hidden {isResizing ||
   isResizingSidebar
     ? 'cursor-col-resize select-none'
     : ''}"
@@ -653,7 +670,10 @@
 >
   <Header
     {appName}
-    onShowShortcuts={() => (isShortcutsModalOpen = true)}
+    onShowShortcuts={() => openSettings("shortcuts")}
+    {themePreference}
+    onThemePreferenceChange={handleThemePreferenceChange}
+    themePreferenceOptions={THEME_PREFERENCE_OPTIONS}
     filePath={currentFilePath}
     isDirty={currentFileDirty}
     lastSaved={currentFileLastSaved}
@@ -664,13 +684,11 @@
     onTogglePreview={() => (previewVisible = !previewVisible)}
   />
 
-  <Modal
+  <SettingsModal
     isOpen={isShortcutsModalOpen}
     onClose={() => (isShortcutsModalOpen = false)}
-    title="Keyboard Shortcuts"
-  >
-    <ShortcutEditor />
-  </Modal>
+    initialTab={settingsInitialTab}
+  />
 
   <div
     bind:this={mainLayout}
@@ -698,32 +716,35 @@
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div
         onmousedown={handleSidebarGripMouseDown}
-        class="w-1 cursor-col-resize bg-[#333] hover:bg-blue-500 transition-colors shrink-0 flex items-center justify-center z-10 relative group {isResizingSidebar
+        class="w-1 cursor-col-resize bg-[var(--app-grip)] hover:bg-blue-500 transition-colors shrink-0 flex items-center justify-center z-10 relative group {isResizingSidebar
           ? 'bg-blue-600'
           : ''}"
         title="Drag to resize sidebar"
       >
         <div
-          class="absolute h-10 w-6 flex items-center justify-center rounded-md bg-[#1e1e1e] border border-[#333] opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none"
+          class="absolute h-10 w-6 flex items-center justify-center rounded-md bg-[var(--app-bg)] border border-[var(--app-border)] opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none"
         >
-          <GripVertical size={16} class="text-gray-400" />
+          <GripVertical size={16} class="text-[var(--app-icon-muted)]" />
         </div>
       </div>
     {/if}
 
     <div
       bind:this={editorPreviewRegion}
-      class="flex flex-1 min-h-0 min-w-0"
+      class="flex-1 min-h-0 min-w-0 {previewVisible ? 'grid' : 'flex'}"
+      style:grid-template-columns={previewVisible
+        ? `minmax(${EDITOR_PANE_MIN}px, ${Math.max(1, Math.round(splitRatio * 1000))}fr) ${SPLIT_GRIP_PX}px minmax(${PREVIEW_PANE_MIN}px, ${Math.max(1, Math.round((1 - splitRatio) * 1000))}fr)`
+        : undefined}
     >
       <div
-        class="h-full relative min-w-0 flex flex-col border-r border-[#333] overflow-hidden {previewVisible
-          ? 'shrink-0'
-          : 'flex-1'}"
-        style:width={previewVisible ? `${editorWidthPx}px` : undefined}
+        class="h-full relative min-w-0 flex flex-col border-r border-[var(--app-border)] overflow-hidden {previewVisible
+          ? 'min-h-0'
+          : 'flex-1 min-h-0'}"
       >
         <MonacoEditorPane
           initialValue={content}
           {appZoom}
+          monacoTheme={monacoThemeResolved}
           onContentChange={onEditorContentChange}
           onReady={(ed) => {
             editor = ed;
@@ -738,21 +759,18 @@
         <!-- svelte-ignore a11y_no_static_element_interactions -->
         <div
           onmousedown={handleEditorSplitMouseDown}
-          class="w-1 cursor-col-resize bg-[#333] hover:bg-blue-500 transition-colors flex items-center justify-center z-10 relative group shrink-0 {isResizing
+          class="w-1 cursor-col-resize bg-[var(--app-grip)] hover:bg-blue-500 transition-colors flex items-center justify-center z-10 relative group shrink-0 {isResizing
             ? 'bg-blue-600'
             : ''}"
         >
           <div
-            class="absolute h-10 w-6 flex items-center justify-center rounded-md bg-[#1e1e1e] border border-[#333] opacity-0 group-hover:opacity-100 transition-opacity"
+            class="absolute h-10 w-6 flex items-center justify-center rounded-md bg-[var(--app-bg)] border border-[var(--app-border)] opacity-0 group-hover:opacity-100 transition-opacity"
           >
-            <GripVertical size={16} class="text-gray-400" />
+            <GripVertical size={16} class="text-[var(--app-icon-muted)]" />
           </div>
         </div>
 
-        <div
-          class="h-full flex flex-col flex-1 overflow-hidden shrink-0"
-          style:min-width="{PREVIEW_MIN_W}px"
-        >
+        <div class="h-full flex flex-col min-w-0 min-h-0 overflow-hidden">
           <SvgPreview
             {error}
             pages={previewPages}

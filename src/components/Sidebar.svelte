@@ -7,14 +7,14 @@
     isDirectory: boolean;
   }
 
-  let { 
+  let {
     width,
-    openFiles, 
-    activeFile, 
-    currentFolder, 
-    folderFiles, 
-    onSelectFile, 
-    onCloseFile 
+    openFiles,
+    activeFile,
+    currentFolder,
+    folderFiles,
+    onSelectFile,
+    onCloseFile,
   } = $props<{
     width: number;
     openFiles: { path: string; name: string; isDirty?: boolean; lastSaved?: Date | null }[];
@@ -24,7 +24,6 @@
     onSelectFile: (path: string) => void;
     onCloseFile: (path: string) => void;
   }>();
-
 
   let explorerOpen = $state(true);
   let openEditorsOpen = $state(true);
@@ -47,15 +46,17 @@
 
 <aside
   style:width="{width}px"
-  class="h-full shrink-0 bg-[#252526] flex flex-col select-none text-gray-400 overflow-hidden border-r border-[#333]/30 min-w-0 max-w-full"
+  class="h-full min-h-0 shrink-0 bg-[var(--app-surface)] flex flex-col select-none text-[var(--app-fg-secondary)] overflow-hidden border-r border-[var(--app-border)] min-w-0 max-w-full"
 >
-  <!-- No top header to keep it simpler -->
-
-  <!-- Open Editors Section -->
-  <div class="flex flex-col">
-    <button 
-      onclick={() => openEditorsOpen = !openEditorsOpen}
-      class="flex items-center gap-1 px-2 py-1.5 bg-[#333]/20 hover:bg-[#333]/40 text-[10px] font-bold uppercase tracking-wider text-gray-400 border-b border-[#333]/30"
+  <div
+    class="flex flex-col min-h-0 {openEditorsOpen
+      ? 'flex-1 overflow-hidden'
+      : 'shrink-0'}"
+  >
+    <button
+      type="button"
+      onclick={() => (openEditorsOpen = !openEditorsOpen)}
+      class="shrink-0 flex items-center gap-1 px-2 py-1.5 bg-[var(--app-surface-toolbar)] hover:bg-[var(--app-surface-hover)] text-[10px] font-bold uppercase tracking-wider text-[var(--app-fg-secondary)] border-b border-[var(--app-border)]"
     >
       {#if openEditorsOpen}
         <ChevronDown size={14} />
@@ -64,34 +65,46 @@
       {/if}
       Open Editors
     </button>
-    
+
     {#if openEditorsOpen}
-      <div class="flex flex-col py-0.5">
+      <div class="flex flex-1 min-h-0 flex-col overflow-y-auto py-0.5">
         {#each openFiles as file}
           <!-- svelte-ignore a11y_click_events_have_key_events -->
           <!-- svelte-ignore a11y_no_static_element_interactions -->
-          <div 
-            class="group flex items-center justify-between px-4 py-1 text-xs hover:bg-[#2a2d2e] cursor-pointer {activeFile === file.path ? 'bg-[#37373d] text-white' : ''}"
+          <div
+            class="group flex items-center justify-between px-4 py-1 text-xs hover:bg-[var(--app-surface-hover)] cursor-pointer {activeFile === file.path
+              ? 'bg-[var(--app-surface-active)] text-[var(--app-active-fg)]'
+              : ''}"
             onclick={() => onSelectFile(file.path)}
           >
             <div class="flex items-center gap-2 overflow-hidden flex-1">
               <div class="relative">
-                <FileText size={14} class={activeFile === file.path ? 'text-blue-400' : 'text-gray-500'} />
+                <FileText
+                  size={14}
+                  class={activeFile === file.path ? "text-[var(--app-link)]" : "text-[var(--app-icon-muted)]"}
+                />
                 {#if file.isDirty}
-                  <div class="absolute -top-1 -right-1 w-2 h-2 bg-blue-500 rounded-full border border-[#252526]"></div>
+                  <div
+                    class="absolute -top-1 -right-1 w-2 h-2 bg-blue-500 rounded-full border-2 border-[var(--app-surface)]"
+                  ></div>
                 {/if}
               </div>
               <span class="truncate flex-1">{file.name}</span>
               {#if file.lastSaved && !file.isDirty}
-                <span class="text-[9px] text-gray-500 whitespace-nowrap opacity-60 group-hover:opacity-100 transition-opacity">
+                <span
+                  class="text-[9px] text-[var(--app-fg-muted)] whitespace-nowrap opacity-60 group-hover:opacity-100 transition-opacity"
+                >
                   {formatRelativeTime(file.lastSaved)}
                 </span>
               {/if}
             </div>
-            <button 
+            <button
               type="button"
-              onclick={(e) => { e.stopPropagation(); onCloseFile(file.path); }}
-              class="opacity-0 group-hover:opacity-100 p-0.5 hover:bg-[#454545] rounded transition-opacity"
+              onclick={(e) => {
+                e.stopPropagation();
+                onCloseFile(file.path);
+              }}
+              class="opacity-0 group-hover:opacity-100 p-0.5 hover:bg-[var(--app-surface-elevated)] rounded transition-opacity text-[var(--app-fg)]"
             >
               <X size={12} />
             </button>
@@ -101,39 +114,45 @@
     {/if}
   </div>
 
-  <!-- Explorer Section -->
-  <div class="flex flex-col flex-1 border-t border-[#333]">
-    <button 
-      onclick={() => explorerOpen = !explorerOpen}
-      class="flex items-center gap-1 px-2 py-1.5 bg-[#333]/20 hover:bg-[#333]/40 text-[10px] font-bold uppercase tracking-wider text-gray-400 border-b border-[#333]/30"
+  <div
+    class="flex flex-col min-h-0 border-t border-[var(--app-border)] {explorerOpen
+      ? 'flex-1 overflow-hidden'
+      : 'shrink-0'}"
+  >
+    <button
+      type="button"
+      onclick={() => (explorerOpen = !explorerOpen)}
+      class="shrink-0 flex items-center gap-1 px-2 py-1.5 bg-[var(--app-surface-toolbar)] hover:bg-[var(--app-surface-hover)] text-[10px] font-bold uppercase tracking-wider text-[var(--app-fg-secondary)] border-b border-[var(--app-border)]"
     >
       {#if explorerOpen}
         <ChevronDown size={14} />
       {:else}
         <ChevronRight size={14} />
       {/if}
-      {currentFolder ? currentFolder.split('/').pop() : 'No Folder Opened'}
+      {currentFolder ? currentFolder.split("/").pop() : "No Folder Opened"}
     </button>
-    
+
     {#if explorerOpen}
-      <div class="flex flex-1 flex-col py-0.5 overflow-y-auto">
+      <div class="flex min-h-0 flex-1 flex-col overflow-y-auto py-0.5">
         {#if !currentFolder}
           <div class="p-4 text-center">
-            <p class="text-[11px] text-gray-500 leading-relaxed">
+            <p class="text-[11px] text-[var(--app-fg-muted)] leading-relaxed">
               You have not yet opened a folder.
             </p>
           </div>
         {:else}
           {#each folderFiles as item}
-            <button 
+            <button
               type="button"
-              class="flex w-full items-center gap-2 px-4 py-0.5 text-xs hover:bg-[#2a2d2e] cursor-pointer {activeFile === item.path ? 'bg-[#37373d] text-white' : ''}"
+              class="flex w-full items-center gap-2 px-4 py-0.5 text-xs hover:bg-[var(--app-surface-hover)] cursor-pointer {activeFile === item.path
+                ? 'bg-[var(--app-surface-active)] text-[var(--app-active-fg)]'
+                : 'text-[var(--app-fg-secondary)]'}"
               onclick={() => onSelectFile(item.path)}
             >
               {#if item.isDirectory}
-                <Folder size={14} class="text-blue-400" />
+                <Folder size={14} class="text-[var(--app-link)]" />
               {:else}
-                <FileText size={14} class="text-gray-500" />
+                <FileText size={14} class="text-[var(--app-icon-muted)]" />
               {/if}
               <span class="truncate text-left">{item.name}</span>
             </button>

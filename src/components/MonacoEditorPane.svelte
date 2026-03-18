@@ -11,12 +11,15 @@
   let {
     initialValue,
     appZoom,
+    monacoTheme = "vs-dark",
     onContentChange,
     onReady,
     onDispose,
   } = $props<{
     initialValue: string;
     appZoom: number;
+    /** Monaco built-in theme id: vs, vs-dark, hc-black, hc-light */
+    monacoTheme?: string;
     onContentChange: (value: string) => void;
     onReady: (editor: monaco.editor.IStandaloneCodeEditor) => void;
     onDispose?: () => void;
@@ -51,7 +54,7 @@
       ed = monaco.editor.create(host, {
         value: initialValue,
         language: "typst",
-        theme: "vs-dark",
+        theme: monacoTheme,
         minimap: { enabled: false },
         fontSize: 14 * appZoom,
         wordWrap: "on",
@@ -92,6 +95,13 @@
     const ed = editorInstance;
     if (ed && appZoom) {
       ed.updateOptions({ fontSize: 14 * appZoom });
+    }
+  });
+
+  $effect(() => {
+    const ed = editorInstance;
+    if (ed && monacoTheme) {
+      monaco.editor.setTheme(monacoTheme);
     }
   });
 </script>

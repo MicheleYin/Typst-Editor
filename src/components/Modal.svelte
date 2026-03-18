@@ -29,14 +29,14 @@
     onclick={onClose}
   >
     <div
-      class="bg-[#252526] border border-[#333] rounded-lg shadow-2xl w-full max-w-2xl max-h-[80vh] flex flex-col overflow-hidden animate-in zoom-in-95 duration-200"
+      class="bg-[var(--app-surface)] border border-[var(--app-border)] rounded-lg shadow-2xl w-full max-w-2xl max-h-[80vh] flex flex-col overflow-hidden animate-in zoom-in-95 duration-200"
       onclick={(e) => e.stopPropagation()}
     >
-      <div class="flex items-center justify-between px-6 py-4 border-b border-[#333]">
-        <h2 class="text-sm font-semibold text-gray-200">{title}</h2>
+      <div class="flex items-center justify-between px-6 py-4 border-b border-[var(--app-border)]">
+        <h2 class="text-sm font-semibold text-[var(--app-fg)]">{title}</h2>
         <button
           onclick={onClose}
-          class="p-1 hover:bg-[#333] rounded transition-colors text-gray-400 hover:text-white"
+          class="p-1 hover:bg-[var(--app-btn-ghost-hover)] rounded transition-colors text-[var(--app-fg-secondary)] hover:text-[var(--app-close-hover-fg)]"
         >
           <X size={18} />
         </button>

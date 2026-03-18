@@ -1,39 +1,170 @@
+use std::fs;
+use std::path::Path;
+use std::path::PathBuf;
+
+use chrono::Datelike;
 use tauri::command;
-use tauri::menu::{Menu, Submenu, MenuItem, PredefinedMenuItem};
+use tauri::Manager;
+use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::Emitter;
-use typst::diag::{FileError, SourceDiagnostic};
+use typst::diag::{FileError, FileResult, SourceDiagnostic};
 use typst::foundations::{Bytes, Datetime};
 use typst::layout::PagedDocument;
-use typst::syntax::{FileId, Source, Span};
+use typst::syntax::{FileId, Source, Span, VirtualPath};
 use typst::text::{Font, FontBook};
-use typst::{Library, LibraryExt, World, WorldExt};
 use typst::utils::LazyHash;
-use chrono::Datelike;
+use typst::{Library, LibraryExt, World, WorldExt};
+use typst_kit::download::{Downloader, ProgressSink};
+use typst_kit::package::PackageStorage;
 
-struct SimpleWorld {
+/// Subfolder under the app cache directory (sandbox-safe on App Store).
+const TYPST_PACKAGES_CACHE_DIR: &str = "typst-packages";
+
+fn typst_package_cache_root(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .app_cache_dir()
+        .map(|p| p.join(TYPST_PACKAGES_CACHE_DIR))
+        .map_err(|e| e.to_string())
+}
+
+fn ensure_typst_package_cache(app: &tauri::AppHandle) -> PathBuf {
+    match typst_package_cache_root(app) {
+        Ok(p) => {
+            let _ = fs::create_dir_all(&p);
+            p
+        }
+        Err(e) => {
+            eprintln!("typst-editor: app cache dir unavailable ({e}), using temp dir");
+            let p = std::env::temp_dir().join("typst-editor-typst-packages");
+            let _ = fs::create_dir_all(&p);
+            p
+        }
+    }
+}
+
+fn dir_disk_usage(path: &Path) -> std::io::Result<(u64, u32)> {
+    let mut size = 0u64;
+    let mut files = 0u32;
+    if !path.exists() {
+        return Ok((0, 0));
+    }
+    fn walk(path: &Path, size: &mut u64, files: &mut u32) -> std::io::Result<()> {
+        for entry in fs::read_dir(path)? {
+            let entry = entry?;
+            let ty = entry.file_type()?;
+            if ty.is_dir() {
+                walk(&entry.path(), size, files)?;
+            } else if ty.is_file() {
+                *files += 1;
+                *size += entry.metadata()?.len();
+            }
+        }
+        Ok(())
+    }
+    walk(path, &mut size, &mut files)?;
+    Ok((size, files))
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PackageCacheInfo {
+    path: String,
+    size_bytes: u64,
+    file_count: u32,
+    location_note: String,
+}
+
+#[command]
+fn get_typst_package_cache_info(app: tauri::AppHandle) -> Result<PackageCacheInfo, String> {
+    let root = typst_package_cache_root(&app)?;
+    let (size_bytes, file_count) = dir_disk_usage(&root).map_err(|e| e.to_string())?;
+    Ok(PackageCacheInfo {
+        path: root.to_string_lossy().into_owned(),
+        size_bytes,
+        file_count,
+        location_note: "App cache directory (sandbox container when distributed via App Store).".into(),
+    })
+}
+
+#[command]
+fn clear_typst_package_cache(app: tauri::AppHandle) -> Result<(), String> {
+    let root = typst_package_cache_root(&app)?;
+    if root.exists() {
+        fs::remove_dir_all(&root).map_err(|e| e.to_string())?;
+    }
+    fs::create_dir_all(&root).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+struct EditorWorld {
     library: LazyHash<Library>,
     book: LazyHash<FontBook>,
     fonts: Vec<Font>,
-    source: Source,
+    main_source: Source,
+    /// Parent directory of the saved main file (for local `#import "…"` and assets).
+    project_root: Option<PathBuf>,
+    package_storage: PackageStorage,
 }
 
-impl SimpleWorld {
-    fn new(content: String) -> Self {
+impl EditorWorld {
+    fn new(content: String, main_path: Option<String>, package_cache: PathBuf) -> Self {
         let fonts: Vec<Font> = typst_assets::fonts()
             .map(|data| Font::new(Bytes::new(data.to_vec()), 0).expect("failed to load font"))
             .collect();
         println!("Loaded {} fonts", fonts.len());
 
+        let (main_source, project_root) = match main_path {
+            Some(ref p) if !p.is_empty() => {
+                let path = PathBuf::from(p);
+                if let Some(parent) = path.parent().filter(|x| !x.as_os_str().is_empty()) {
+                    if let Some(vp) = VirtualPath::within_root(&path, parent) {
+                        let id = FileId::new(None, vp);
+                        (Source::new(id, content), Some(parent.to_path_buf()))
+                    } else {
+                        (Source::detached(content), None)
+                    }
+                } else {
+                    (Source::detached(content), None)
+                }
+            }
+            _ => (Source::detached(content), None),
+        };
+
+        let package_storage = PackageStorage::new(
+            Some(package_cache),
+            None,
+            Downloader::new("typst-editor/0.1 (Typst packages.typst.org)"),
+        );
+
         Self {
             library: LazyHash::new(Library::default()),
             book: LazyHash::new(FontBook::from_fonts(&fonts)),
             fonts,
-            source: Source::detached(content),
+            main_source,
+            project_root,
+            package_storage,
+        }
+    }
+
+    fn resolve_path(&self, id: FileId) -> FileResult<PathBuf> {
+        if let Some(spec) = id.package() {
+            let base = self
+                .package_storage
+                .prepare_package(spec, &mut ProgressSink)?;
+            id.vpath()
+                .resolve(&base)
+                .ok_or_else(|| FileError::NotFound(base.join(id.vpath().as_rootless_path())))
+        } else if let Some(root) = &self.project_root {
+            id.vpath()
+                .resolve(root)
+                .ok_or_else(|| FileError::NotFound(root.join(id.vpath().as_rootless_path())))
+        } else {
+            Err(FileError::NotFound(id.vpath().as_rootless_path().to_path_buf()))
         }
     }
 }
 
-impl World for SimpleWorld {
+impl World for EditorWorld {
     fn library(&self) -> &LazyHash<Library> {
         &self.library
     }
@@ -43,23 +174,29 @@ impl World for SimpleWorld {
     }
 
     fn main(&self) -> FileId {
-        self.source.id()
+        self.main_source.id()
     }
 
-    fn source(&self, id: FileId) -> Result<Source, FileError> {
-        if id == self.source.id() {
-            Ok(self.source.clone())
-        } else {
-            Err(FileError::NotFound(id.vpath().as_rootless_path().to_path_buf()))
+    fn source(&self, id: FileId) -> FileResult<Source> {
+        if id == self.main_source.id() {
+            return Ok(self.main_source.clone());
         }
+        let path = self.resolve_path(id)?;
+        let text = std::fs::read_to_string(&path).map_err(|e| FileError::from_io(e, &path))?;
+        Ok(Source::new(id, text))
     }
 
     fn font(&self, index: usize) -> Option<Font> {
         self.fonts.get(index).cloned()
     }
 
-    fn file(&self, id: FileId) -> Result<Bytes, FileError> {
-        Err(FileError::NotFound(id.vpath().as_rootless_path().to_path_buf()))
+    fn file(&self, id: FileId) -> FileResult<Bytes> {
+        if id == self.main_source.id() {
+            return Err(FileError::NotSource);
+        }
+        let path = self.resolve_path(id)?;
+        let data = std::fs::read(&path).map_err(|e| FileError::from_io(e, &path))?;
+        Ok(Bytes::new(data))
     }
 
     fn today(&self, offset: Option<i64>) -> Option<Datetime> {
@@ -103,7 +240,7 @@ struct CompileResponse {
     diagnostics: Vec<CompileDiagnosticJson>,
 }
 
-fn span_location(world: &SimpleWorld, span: Span) -> (Option<String>, Option<u32>, Option<u32>) {
+fn span_location(world: &EditorWorld, span: Span) -> (Option<String>, Option<u32>, Option<u32>) {
     if span.is_detached() {
         return (None, None, None);
     }
@@ -132,7 +269,7 @@ fn span_location(world: &SimpleWorld, span: Span) -> (Option<String>, Option<u32
     )
 }
 
-fn diagnostic_to_json(world: &SimpleWorld, d: &SourceDiagnostic) -> CompileDiagnosticJson {
+fn diagnostic_to_json(world: &EditorWorld, d: &SourceDiagnostic) -> CompileDiagnosticJson {
     let (file, line, column) = span_location(world, d.span);
     let hints: Vec<String> = d.hints.iter().map(|h| h.to_string()).collect();
     let trace: Vec<CompileTraceEntry> = d
@@ -159,9 +296,12 @@ fn diagnostic_to_json(world: &SimpleWorld, d: &SourceDiagnostic) -> CompileDiagn
 }
 
 /// Rich compile result: on failure, `diagnostics` is filled; `pages` stay empty.
+/// `main_path`: absolute path to the saved `.typ` file when known; enables local imports
+/// and image paths. Online `@preview/...` packages work with or without `main_path`.
 #[command]
-fn compile_typst(content: String) -> CompileResponse {
-    let world = SimpleWorld::new(content);
+fn compile_typst(app: tauri::AppHandle, content: String, main_path: Option<String>) -> CompileResponse {
+    let package_cache = ensure_typst_package_cache(&app);
+    let world = EditorWorld::new(content, main_path, package_cache);
     let warned = typst::compile::<PagedDocument>(&world);
     match warned.output {
         Ok(document) => {
@@ -266,13 +406,16 @@ pub fn run() {
             )?;
 
             // Help Menu
+            let pkg_cache = MenuItem::with_id(handle, "help-package-cache", "Package Cache…", true, None::<&str>)?;
             let shortcuts = MenuItem::with_id(handle, "help-shortcuts", "Keyboard Shortcuts", true, Some("CmdOrCtrl+K CmdOrCtrl+S"))?;
             let help_menu = Submenu::with_items(
                 handle,
                 "Help",
                 true,
                 &[
+                    &pkg_cache,
                     &shortcuts,
+                    &PredefinedMenuItem::separator(handle)?,
                     &PredefinedMenuItem::about(handle, None, None)?,
                 ],
             )?;
@@ -317,7 +460,12 @@ pub fn run() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![compile_typst, typst_engine_version])
+        .invoke_handler(tauri::generate_handler![
+            compile_typst,
+            typst_engine_version,
+            get_typst_package_cache_info,
+            clear_typst_package_cache
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
