@@ -29,8 +29,17 @@
   },
   "bundle": {
     "active": true,
+    "category": "DeveloperTool",
     "targets": "all",
     "resources": ["resources/fonts/bundled"],
+    "macOS": {
+      "entitlements": "Entitlements.macos-direct.plist",
+      "minimumSystemVersion": "11.0",
+      "hardenedRuntime": true
+    },
+    "iOS": {
+      "minimumSystemVersion": "14.0"
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

@@ -5,9 +5,13 @@ use std::path::PathBuf;
 use chrono::Datelike;
 use tauri::command;
 use tauri::path::BaseDirectory;
-use tauri::Manager;
-use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
+#[cfg(desktop)]
 use tauri::Emitter;
+use tauri::Manager;
+// Native app menus are desktop-only in Tauri (`cfg(desktop)`). iOS/iPadOS builds omit
+// `set_menu` / `on_menu_event`; use web shortcuts + in-app UI on iPad for the same actions.
+#[cfg(desktop)]
+use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
 use typst::diag::{FileError, FileResult, SourceDiagnostic};
 use typst::foundations::{Bytes, Datetime};
 use typst::layout::PagedDocument;
@@ -855,21 +859,27 @@ fn typst_engine_version() -> String {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    #[allow(unused_mut)] // `mut` only needed when `desktop` enables window-state plugin
+    let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_fs::init())
-        .plugin(
-            tauri_plugin_window_state::Builder::default()
-                .build(),
-        )
+        .plugin(tauri_plugin_fs::init());
+
+    #[cfg(desktop)]
+    {
+        builder = builder.plugin(tauri_plugin_window_state::Builder::default().build());
+    }
+
+    builder
         .setup(|app| {
             let handle = app.handle();
             if let Err(e) = migrate_font_config_to_local_storage(&handle) {
                 eprintln!("typst-editor: font config migration: {e}");
             }
+            #[cfg(desktop)]
+            {
             let app_menu_title = handle.package_info().name.clone();
-            
+
             // File Menu
             let new_file = MenuItem::with_id(handle, "file-new", "New File", true, Some("CmdOrCtrl+N"))?;
             let open_file = MenuItem::with_id(handle, "file-open", "Open File...", true, Some("CmdOrCtrl+O"))?;
@@ -985,6 +995,7 @@ pub fn run() {
                 );
                 let _ = app_handle.emit("menu-event", id);
             });
+            }
 
             Ok(())
         })

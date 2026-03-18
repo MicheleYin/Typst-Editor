@@ -23,3 +23,21 @@ dist-ssr
 *.sln
 *.sw?
 .history
+
+# Generated Mac App Store entitlements (from .template + APPLE_TEAM_ID); see scripts/gen-macos-appstore-entitlements.cjs
+src-tauri/Entitlements.macos-appstore.plist
+
+# Apple signing & certificates — never commit (see src-tauri/signing/README.md)
+# Ignore everything in signing/ except the README
+src-tauri/signing/*
+!src-tauri/signing/README.md
+# Same artifacts anywhere in the repo (Xcode exports, Downloads, etc.)
+*.provisionprofile
+*.mobileprovision
+*.p12
+*.cer
+*.certSigningRequest
+*.csr
+AuthKey_*.p8
+# App Store Connect API keys (any folder)
+**/AuthKey_*.p8
