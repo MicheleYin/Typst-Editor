@@ -4,12 +4,19 @@
   import * as monaco from "monaco-editor";
   import { listen } from "@tauri-apps/api/event";
   import { GripVertical } from "lucide-svelte";
-  import { open, save, message } from "@tauri-apps/plugin-dialog";
-  import { readTextFile, writeTextFile, readDir } from "@tauri-apps/plugin-fs";
+  import { open, save, message, ask } from "@tauri-apps/plugin-dialog";
+  import {
+    readTextFile,
+    writeTextFile,
+    readDir,
+    BaseDirectory,
+  } from "@tauri-apps/plugin-fs";
+  import { join } from "@tauri-apps/api/path";
   import Header from "./components/Header.svelte";
   import Sidebar from "./components/Sidebar.svelte";
   import SettingsModal from "./components/SettingsModal.svelte";
   import InitialPage from "./components/InitialPage.svelte";
+  import IosProjectHub from "./components/IosProjectHub.svelte";
   import SvgPreview from "./components/SvgPreview.svelte";
   import MonacoEditorPane from "./components/MonacoEditorPane.svelte";
   import EditorQuickActions from "./components/EditorQuickActions.svelte";
@@ -30,6 +37,17 @@
     type ThemePreference,
   } from "./lib/monacoThemes";
   import { listTypstFontFaces, type TypstFontFace } from "./lib/typstFonts";
+  import {
+    iosListProjects,
+    iosCreateProject,
+    iosValidateNewProjectTitle,
+    iosRenameProject,
+    IOS_PROJECTS_DIR,
+    iosDeleteProject,
+    iosImportTypIntoProject,
+    iosTouchProjectUpdated,
+    type IosProjectSummary,
+  } from "./lib/iosProjects";
   import pkg from "../package.json";
 
   let appName = $state(pkg.name);
@@ -37,13 +55,213 @@
   let openFiles = $state<{ path: string; name: string; content: string; isDirty?: boolean; lastSaved?: Date | null }[]>([]);
   let currentFilePath = $state<string | null>(null);
   let currentFolder = $state<string | null>(null);
-  let isLandingPage = $derived(openFiles.length === 0 && !currentFilePath && !currentFolder);
+  let fileUiMode = $state<"desktop" | "ios-projects">("desktop");
+  let iosProjectsList = $state<IosProjectSummary[]>([]);
+  /** Active iOS project folder (absolute path); null on project picker hub */
+  let iosProjectPath = $state<string | null>(null);
+  let iosProjectFolderId = $state<string | null>(null);
+  let iosProjectTitle = $state("");
+  let isIosProjectHub = $derived(fileUiMode === "ios-projects" && !iosProjectPath);
+  let isLandingPage = $derived(
+    fileUiMode === "desktop" &&
+      openFiles.length === 0 &&
+      !currentFilePath &&
+      !currentFolder,
+  );
 
   let content = $state("");
   let pages = $state<string[]>([]);
   let pageCount = $state(0);
   let currentPage = $state(0);
   let error = $state("");
+
+  /** iOS/Android: WKWebView has no working window.prompt — use modal instead */
+  let saveAsModalOpen = $state(false);
+  let saveAsFilename = $state("untitled.typ");
+  let saveAsDocsRoot = $state<string | null>(null);
+  let saveAsIntent = $state<"saveAs" | "newFile">("saveAs");
+
+  /** Write via Document base dir when path is under app Documents (more reliable on iOS). */
+  async function writeFileAtPath(absPath: string, data: string): Promise<void> {
+    const root = await invoke<string | null>("workspace_documents_dir");
+    if (root) {
+      const normRoot = root.replace(/\/$/, "");
+      const normPath = absPath.replace(/\/$/, "");
+      if (normPath === normRoot || normPath.startsWith(`${normRoot}/`)) {
+        const rel =
+          normPath === normRoot ? "" : normPath.slice(normRoot.length + 1);
+        if (rel && !rel.startsWith("..") && !rel.includes("/../")) {
+          await writeTextFile(rel, data, { baseDir: BaseDirectory.Document });
+          return;
+        }
+      }
+    }
+    await writeTextFile(absPath, data);
+  }
+
+  /** Persist the active editor to disk (iOS project mode) before switching files or leaving. */
+  async function iosFlushCurrentEditor(): Promise<void> {
+    if (fileUiMode !== "ios-projects" || !iosProjectPath) return;
+    const path = currentFilePath;
+    if (!path || !path.startsWith(iosProjectPath)) return;
+    const text = content;
+    try {
+      await writeFileAtPath(path, text);
+      openFiles = openFiles.map((f) =>
+        f.path === path
+          ? { ...f, content: text, isDirty: false, lastSaved: new Date() }
+          : f,
+      );
+      if (iosProjectFolderId) void iosTouchProjectUpdated(iosProjectFolderId);
+    } catch (e) {
+      console.error("iosFlushCurrentEditor:", e);
+    }
+  }
+
+  function closeSaveAsModal() {
+    saveAsModalOpen = false;
+    saveAsDocsRoot = null;
+  }
+
+  async function confirmSaveAsModal() {
+    if (!saveAsDocsRoot) return;
+    let base = saveAsFilename.trim();
+    if (!base) {
+      error = "Enter a file name.";
+      return;
+    }
+    if (!base.endsWith(".typ")) base = `${base}.typ`;
+    const intent = saveAsIntent;
+
+    /** Inside an iOS project, New File creates a new .typ on disk immediately (template). */
+    if (
+      intent === "newFile" &&
+      iosProjectPath &&
+      saveAsDocsRoot === iosProjectPath
+    ) {
+      await iosFlushCurrentEditor();
+      try {
+        const entries = await readDir(iosProjectPath);
+        const nameSet = new Set(
+          entries.map((e) => e.name).filter(Boolean) as string[],
+        );
+        let fileName = base;
+        if (nameSet.has(fileName)) {
+          const stem = fileName.replace(/\.typ$/i, "");
+          let n = 2;
+          while (nameSet.has(`${stem}-${n}.typ`)) n += 1;
+          fileName = `${stem}-${n}.typ`;
+        }
+        const selected = await join(iosProjectPath, fileName);
+        const initial = defaultNewFileContent(appName);
+        await writeFileAtPath(selected, initial);
+        error = "";
+        closeSaveAsModal();
+        await loadFolderFiles(iosProjectPath);
+        if (openFiles.find((f) => f.path === selected)) {
+          openFiles = openFiles.map((f) =>
+            f.path === selected
+              ? {
+                  ...f,
+                  name: fileName,
+                  content: initial,
+                  isDirty: false,
+                  lastSaved: new Date(),
+                }
+              : f,
+          );
+        } else {
+          openFiles = [
+            ...openFiles,
+            {
+              path: selected,
+              name: fileName,
+              content: initial,
+              isDirty: false,
+              lastSaved: new Date(),
+            },
+          ];
+        }
+        currentFilePath = selected;
+        content = initial;
+        editor?.setValue(initial);
+        if (iosProjectFolderId) void iosTouchProjectUpdated(iosProjectFolderId);
+      } catch (e) {
+        error = `Error creating file: ${e}`;
+      }
+      return;
+    }
+
+    let selected: string;
+    try {
+      selected = await join(saveAsDocsRoot, base);
+    } catch (e) {
+      error = `Invalid file name: ${e}`;
+      return;
+    }
+    try {
+      await writeFileAtPath(selected, content);
+    } catch (e) {
+      error = `Error saving: ${e}`;
+      return;
+    }
+    error = "";
+    closeSaveAsModal();
+
+    if (intent === "newFile") {
+      const name = base;
+      if (!openFiles.find((f) => f.path === selected)) {
+        openFiles = [
+          ...openFiles,
+          {
+            path: selected,
+            name,
+            content,
+            isDirty: false,
+            lastSaved: new Date(),
+          },
+        ];
+      } else {
+        openFiles = openFiles.map((f) =>
+          f.path === selected
+            ? { ...f, content, isDirty: false, lastSaved: new Date() }
+            : f,
+        );
+      }
+      currentFilePath = null;
+      content = defaultNewFileContent(appName);
+      editor?.setValue(content);
+      if (currentFolder) void loadFolderFiles(currentFolder);
+      if (iosProjectFolderId) void iosTouchProjectUpdated(iosProjectFolderId);
+    } else {
+      currentFilePath = selected;
+      const name = base;
+      if (openFiles.find((f) => f.path === selected)) {
+        openFiles = openFiles.map((f) =>
+          f.path === selected
+            ? { ...f, isDirty: false, lastSaved: new Date(), content }
+            : f,
+        );
+      } else {
+        openFiles = [
+          ...openFiles,
+          { path: selected, name, content, isDirty: false, lastSaved: new Date() },
+        ];
+      }
+      if (currentFolder) void loadFolderFiles(currentFolder);
+      if (iosProjectFolderId) void iosTouchProjectUpdated(iosProjectFolderId);
+    }
+  }
+
+  async function openMobileSaveAsModal(intent: "saveAs" | "newFile") {
+    const root = await invoke<string | null>("workspace_documents_dir");
+    if (!root) return false;
+    saveAsDocsRoot = iosProjectPath ?? root;
+    saveAsIntent = intent;
+    saveAsFilename = "untitled.typ";
+    saveAsModalOpen = true;
+    return true;
+  }
   /** Last successful compile for the current file (stale preview on error). */
   let lastValidPages = $state<string[]>([]);
   let lastValidPageCount = $state(0);
@@ -82,12 +300,12 @@
   });
   const SPLIT_RATIO_KEY = "typst-editor-editor-preview-ratio";
   /** Minimum pane widths; above that, editor and preview share extra space by flex ratio (default 50/50). */
-  const EDITOR_PANE_MIN = 160;
-  const PREVIEW_PANE_MIN = 160;
+  const EDITOR_PANE_MIN = 100;
+  const PREVIEW_PANE_MIN = 100;
   const SPLIT_GRIP_PX = 4;
   /** Matches layout: sidebar + editor/preview region needs at least this (web fallback; Tauri uses minWidth) */
   /** Sidebar + editor + grip + preview + mins need ~500px */
-  const APP_MIN_WIDTH_PX = 520;
+  const APP_MIN_WIDTH_PX = 400;
   const APP_MIN_HEIGHT_PX = 300;
 
   function readStoredSplitRatio(): number {
@@ -192,10 +410,19 @@
   );
 
   async function handleOpenFile() {
+    if (fileUiMode === "ios-projects" && iosProjectPath) {
+      await message("Use Import to add .typ files to this project.", {
+        title: "Open file",
+        kind: "info",
+      });
+      return;
+    }
     try {
+      const docsRoot = await invoke<string | null>("workspace_documents_dir");
       const selected = await open({
         multiple: false,
         filters: [{ name: "Typst", extensions: ["typ"] }],
+        ...(docsRoot ? { defaultPath: docsRoot } : {}),
       });
       if (selected && !Array.isArray(selected)) {
         await openFileByPath(selected);
@@ -205,8 +432,64 @@
     }
   }
 
+  async function iosHandleImportTyp() {
+    if (!iosProjectFolderId || !iosProjectPath) return;
+    try {
+      const selected = await open({
+        multiple: true,
+        filters: [{ name: "Typst", extensions: ["typ"] }],
+      });
+      if (!selected) return;
+      const paths = Array.isArray(selected) ? selected : [selected];
+      for (const path of paths) {
+        await iosFlushCurrentEditor();
+        const base = path.split("/").pop() || "imported.typ";
+        const newPath = await iosImportTypIntoProject(iosProjectFolderId, path, base);
+        await loadFolderFiles(iosProjectPath);
+        await openFileByPath(newPath);
+      }
+      error = "";
+    } catch (err) {
+      error = `Import failed: ${err}`;
+    }
+  }
+
+  async function iosHandleExportProject() {
+    if (!iosProjectFolderId) return;
+    try {
+      const defaultPath = `${iosProjectFolderId}.zip`;
+      const path = await save({
+        defaultPath,
+        filters: [{ name: "ZIP archive", extensions: ["zip"] }],
+      });
+      if (path === null) return;
+      await invoke("export_ios_project_zip", {
+        folderId: iosProjectFolderId,
+        outputPath: path,
+      });
+      await message("All project files were saved to the ZIP.", {
+        title: "Export project",
+        kind: "info",
+      });
+      error = "";
+    } catch (err) {
+      await message(String(err), {
+        title: "Export project failed",
+        kind: "error",
+      });
+    }
+  }
+
   async function openFileByPath(path: string) {
     try {
+      if (
+        fileUiMode === "ios-projects" &&
+        iosProjectPath &&
+        currentFilePath &&
+        currentFilePath !== path
+      ) {
+        await iosFlushCurrentEditor();
+      }
       const existing = openFiles.find((f) => f.path === path);
       if (existing) {
         content = existing.content;
@@ -226,7 +509,14 @@
     }
   }
 
-  function handleCloseFile(path: string) {
+  async function handleCloseFile(path: string) {
+    if (
+      fileUiMode === "ios-projects" &&
+      iosProjectPath &&
+      currentFilePath === path
+    ) {
+      await iosFlushCurrentEditor();
+    }
     const index = openFiles.findIndex((f) => f.path === path);
     if (index !== -1) {
       const newFiles = [...openFiles];
@@ -236,7 +526,7 @@
       if (currentFilePath === path) {
         if (openFiles.length > 0) {
           const nextFile = openFiles[Math.max(0, index - 1)];
-          openFileByPath(nextFile.path);
+          await openFileByPath(nextFile.path);
         } else {
           currentFilePath = null;
           content = "";
@@ -261,8 +551,24 @@
       });
   }
 
+  async function openAppDocumentsFolder() {
+    const root = await invoke<string | null>("workspace_documents_dir");
+    if (!root) return false;
+    currentFolder = root;
+    await loadFolderFiles(root);
+    return true;
+  }
+
   async function handleOpenFolder() {
+    if (fileUiMode === "ios-projects") {
+      await message("Open a project from the home screen, or create a new one.", {
+        title: "Folders",
+        kind: "info",
+      });
+      return;
+    }
     try {
+      if (await openAppDocumentsFolder()) return;
       const selected = await open({ directory: true, multiple: false });
       if (selected) {
         currentFolder = selected;
@@ -270,6 +576,208 @@
       }
     } catch (err) {
       error = `Error opening folder: ${err}`;
+    }
+  }
+
+  async function refreshIosProjects() {
+    if (fileUiMode !== "ios-projects") return;
+    try {
+      iosProjectsList = await iosListProjects();
+    } catch {
+      iosProjectsList = [];
+    }
+  }
+
+  async function enterIosProject(p: IosProjectSummary) {
+    iosProjectPath = p.absPath;
+    iosProjectFolderId = p.folderId;
+    iosProjectTitle = p.title;
+    currentFolder = p.absPath;
+    openFiles = [];
+    currentFilePath = null;
+    await loadFolderFiles(p.absPath);
+    const mainPath = `${p.absPath}/main.typ`;
+    try {
+      const text = await readTextFile(mainPath);
+      openFiles = [
+        {
+          path: mainPath,
+          name: "main.typ",
+          content: text,
+          isDirty: false,
+          lastSaved: new Date(),
+        },
+      ];
+      content = text;
+      currentFilePath = mainPath;
+      editor?.setValue(text);
+    } catch {
+      let entries: { name?: string; isDirectory: boolean }[] = [];
+      try {
+        entries = await readDir(p.absPath);
+      } catch {
+        /* ignore */
+      }
+      const typ = entries.find((e) => !e.isDirectory && e.name?.endsWith(".typ"));
+      if (typ?.name) {
+        await openFileByPath(`${p.absPath}/${typ.name}`);
+      } else {
+        content = defaultNewFileContent(appName);
+        editor?.setValue(content);
+      }
+    }
+  }
+
+  async function leaveIosProject() {
+    await iosFlushCurrentEditor();
+    iosProjectPath = null;
+    iosProjectFolderId = null;
+    iosProjectTitle = "";
+    currentFolder = null;
+    openFiles = [];
+    currentFilePath = null;
+    content = "";
+    folderFiles = [];
+    editor?.setValue("");
+    void refreshIosProjects();
+  }
+
+  /** @returns null on success, error message on failure */
+  let iosImportFolderOpen = $state(false);
+  let iosImportFolderPath = $state<string | null>(null);
+  let iosImportFolderTitle = $state("");
+  let iosImportFolderError = $state("");
+
+  /** Default project title from a picked .zip path (iOS has no folder picker in Tauri). */
+  function humanizeImportZipBasename(absPath: string): string {
+    const base = absPath.replace(/\/+$/, "").split("/").pop() || "";
+    const withoutZip = base.replace(/\.zip$/i, "");
+    const s = withoutZip.replace(/[-_]+/g, " ").replace(/\s+/g, " ").trim();
+    if (!s) return "Imported";
+    return s.replace(/\b\w/g, (c) => c.toUpperCase());
+  }
+
+  async function iosRunImportFolderPicker() {
+    try {
+      // Tauri dialog returns FolderPickerNotImplemented for directory:true on iOS/Android.
+      const selected = await open({
+        multiple: false,
+        pickerMode: "document",
+        filters: [{ name: "ZIP archive", extensions: ["zip", "ZIP"] }],
+      });
+      if (!selected || Array.isArray(selected)) return;
+      iosImportFolderPath = selected;
+      iosImportFolderTitle = humanizeImportZipBasename(selected);
+      iosImportFolderError = "";
+      iosImportFolderOpen = true;
+    } catch (e) {
+      await message(String(e), { title: "Import project", kind: "error" });
+    }
+  }
+
+  async function iosConfirmImportFolderAsProject() {
+    const path = iosImportFolderPath;
+    if (!path) return;
+    await refreshIosProjects();
+    const err = await iosValidateNewProjectTitle(
+      iosImportFolderTitle,
+      iosProjectsList,
+    );
+    if (err) {
+      iosImportFolderError = err;
+      return;
+    }
+    iosImportFolderError = "";
+    try {
+      const r = await invoke<{ folderId: string; absPath: string }>(
+        "import_ios_project_from_zip",
+        {
+          zipPath: path,
+          title: iosImportFolderTitle.trim() || "Untitled",
+        },
+      );
+      const t = iosImportFolderTitle.trim() || "Untitled";
+      iosImportFolderOpen = false;
+      iosImportFolderPath = null;
+      await enterIosProject({
+        folderId: r.folderId,
+        title: t,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        absPath: r.absPath,
+      });
+      void refreshIosProjects();
+    } catch (e) {
+      iosImportFolderError = String(e);
+    }
+  }
+
+  async function iosCreateProjectFlow(title: string): Promise<string | null> {
+    await refreshIosProjects();
+    const err = await iosValidateNewProjectTitle(title, iosProjectsList);
+    if (err) return err;
+    try {
+      const p = await iosCreateProject(title);
+      await refreshIosProjects();
+      await enterIosProject(p);
+      return null;
+    } catch (e) {
+      return String(e);
+    }
+  }
+
+  async function iosOnRenameProject(
+    folderId: string,
+    title: string,
+  ): Promise<string | null> {
+    try {
+      const rootRaw = await invoke<string | null>("workspace_documents_dir");
+      const root = rootRaw?.replace(/\/$/, "");
+      if (!root) return "Documents not available.";
+      const norm = (p: string) => p.replace(/\/+$/, "");
+      const oldAbs = norm(`${root}/${IOS_PROJECTS_DIR}/${folderId}`);
+      const r = await iosRenameProject(folderId, title);
+      const newAbs = norm(r.absPath);
+      if (iosProjectFolderId === folderId) {
+        iosProjectFolderId = r.folderId;
+        iosProjectPath = newAbs;
+        iosProjectTitle = r.title;
+        currentFolder = newAbs;
+        openFiles = openFiles.map((f) => ({
+          ...f,
+          path: f.path.startsWith(oldAbs)
+            ? newAbs + f.path.slice(oldAbs.length)
+            : f.path,
+        }));
+        if (currentFilePath?.startsWith(oldAbs)) {
+          currentFilePath = newAbs + currentFilePath.slice(oldAbs.length);
+        }
+        folderFiles = folderFiles.map((ff) => ({
+          ...ff,
+          path: ff.path.startsWith(oldAbs)
+            ? newAbs + ff.path.slice(oldAbs.length)
+            : ff.path,
+        }));
+      }
+      await refreshIosProjects();
+      return null;
+    } catch (e) {
+      return String(e);
+    }
+  }
+
+  async function iosOnDeleteProject(folderId: string) {
+    const ok = await ask(
+      "Delete this project and all files inside? This cannot be undone.",
+      { title: "Delete project", kind: "warning" },
+    );
+    if (!ok) return;
+    try {
+      await iosDeleteProject(folderId);
+      if (iosProjectFolderId === folderId) void leaveIosProject();
+      await refreshIosProjects();
+    } catch (e) {
+      error = String(e);
     }
   }
 
@@ -285,22 +793,27 @@
   async function handleSave() {
     if (currentFilePath) {
       try {
-        await writeTextFile(currentFilePath, content);
+        await writeFileAtPath(currentFilePath, content);
         openFiles = openFiles.map((f) =>
           f.path === currentFilePath
             ? { ...f, isDirty: false, lastSaved: new Date(), content }
             : f,
         );
+        error = "";
+        if (iosProjectFolderId) void iosTouchProjectUpdated(iosProjectFolderId);
       } catch (err) {
         error = `Error saving file: ${err}`;
       }
     } else {
-      await handleSaveAs();
+      const mobile = await openMobileSaveAsModal("saveAs");
+      if (!mobile) await handleSaveAs();
     }
   }
 
   async function handleSaveAs() {
     try {
+      const mobile = await openMobileSaveAsModal("saveAs");
+      if (mobile) return;
       const selected = await save({
         filters: [{ name: "Typst", extensions: ["typ"] }],
       });
@@ -320,6 +833,7 @@
             { path: selected, name, content, isDirty: false, lastSaved: new Date() },
           ];
         }
+        error = "";
       }
     } catch (err) {
       error = `Error saving as: ${err}`;
@@ -328,13 +842,34 @@
 
   $effect(() => {
     if (currentFilePath && content) {
+      const path = currentFilePath;
+      const text = content;
+      const debounceMs =
+        fileUiMode === "ios-projects" && iosProjectPath ? 500 : 1000;
       const timeoutId = setTimeout(async () => {
         try {
-          await writeTextFile(currentFilePath!, content);
+          await writeFileAtPath(path, text);
+          if (
+            fileUiMode === "ios-projects" &&
+            iosProjectPath &&
+            path.startsWith(iosProjectPath)
+          ) {
+            openFiles = openFiles.map((f) =>
+              f.path === path
+                ? {
+                    ...f,
+                    content: text,
+                    isDirty: false,
+                    lastSaved: new Date(),
+                  }
+                : f,
+            );
+            if (iosProjectFolderId) void iosTouchProjectUpdated(iosProjectFolderId);
+          }
         } catch (err) {
           console.error("Auto-sync failed:", err);
         }
-      }, 1000);
+      }, debounceMs);
       return () => clearTimeout(timeoutId);
     }
   });
@@ -423,7 +958,7 @@
     return () => clearTimeout(timeoutId);
   });
 
-  function handleEditorSplitResize(e: MouseEvent) {
+  function handleEditorSplitResize(clientX: number) {
     if (!isResizing || !editorPreviewRegion) return;
     const rect = editorPreviewRegion.getBoundingClientRect();
     const innerW = rect.width - SPLIT_GRIP_PX;
@@ -431,11 +966,11 @@
     const minR = EDITOR_PANE_MIN / innerW;
     const maxR = 1 - PREVIEW_PANE_MIN / innerW;
     if (minR >= maxR) return;
-    const x = e.clientX - rect.left;
+    const x = clientX - rect.left;
     splitRatio = Math.min(maxR, Math.max(minR, x / innerW));
   }
 
-  function handleSidebarResize(e: MouseEvent) {
+  function handleSidebarResize(clientX: number) {
     if (!isResizingSidebar || !mainLayout) return;
     const { left, width: totalW } = mainLayout.getBoundingClientRect();
     const editorPreviewMin = SPLIT_GRIP_PX + EDITOR_PANE_MIN + PREVIEW_PANE_MIN;
@@ -444,8 +979,36 @@
       Math.min(SIDEBAR_MAX, totalW - editorPreviewMin),
     );
     sidebarWidth = Math.round(
-      Math.min(max, Math.max(SIDEBAR_MIN, e.clientX - left)),
+      Math.min(max, Math.max(SIDEBAR_MIN, clientX - left)),
     );
+  }
+
+  /** Document-level pointer listeners: iOS/touch need this; passive:false avoids scroll stealing the drag */
+  function beginPointerResize(kind: "sidebar" | "editor", e: PointerEvent) {
+    e.preventDefault();
+    applyResizeSelectionShield();
+    if (kind === "sidebar") {
+      isResizingSidebar = true;
+    } else {
+      isResizing = true;
+    }
+    const onMove = (ev: PointerEvent) => {
+      ev.preventDefault();
+      if (kind === "sidebar") {
+        handleSidebarResize(ev.clientX);
+      } else {
+        handleEditorSplitResize(ev.clientX);
+      }
+    };
+    const onEnd = () => {
+      document.removeEventListener("pointermove", onMove);
+      document.removeEventListener("pointerup", onEnd);
+      document.removeEventListener("pointercancel", onEnd);
+      stopAllResizing();
+    };
+    document.addEventListener("pointermove", onMove, { passive: false, capture: true });
+    document.addEventListener("pointerup", onEnd, { capture: true });
+    document.addEventListener("pointercancel", onEnd, { capture: true });
   }
 
   function applyResizeSelectionShield() {
@@ -480,26 +1043,12 @@
     clearResizeSelectionShield();
   }
 
-  function handleEditorSplitMouseDown(e: MouseEvent) {
-    e.preventDefault();
-    applyResizeSelectionShield();
-    isResizing = true;
+  function handleEditorSplitPointerDown(e: PointerEvent) {
+    beginPointerResize("editor", e);
   }
 
-  function handleSidebarGripMouseDown(e: MouseEvent) {
-    e.preventDefault();
-    applyResizeSelectionShield();
-    isResizingSidebar = true;
-  }
-
-  function onWindowMouseMove(e: MouseEvent) {
-    if (isResizing) {
-      e.preventDefault();
-      handleEditorSplitResize(e);
-    } else if (isResizingSidebar) {
-      e.preventDefault();
-      handleSidebarResize(e);
-    }
+  function handleSidebarGripPointerDown(e: PointerEvent) {
+    beginPointerResize("sidebar", e);
   }
 
   function appZoomIn() {
@@ -533,7 +1082,9 @@
 
   async function handleShortcutCommand(action: ShortcutAction) {
     switch (action) {
-      case "file.new":
+      case "file.new": {
+        const mobile = await openMobileSaveAsModal("newFile");
+        if (mobile) break;
         await handleSaveAs();
         if (currentFilePath) {
           const name = currentFilePath.split("/").pop() || "untitled.typ";
@@ -553,6 +1104,7 @@
           editor?.setValue(content);
         }
         break;
+      }
       case "file.open":
         handleOpenFile();
         break;
@@ -601,6 +1153,18 @@
         break;
       case "file-open-folder":
         void handleOpenFolder();
+        break;
+      case "ios-import-typ":
+        void iosHandleImportTyp();
+        break;
+      case "ios-export-project":
+        void iosHandleExportProject();
+        break;
+      case "ios-back-projects":
+        void leaveIosProject();
+        break;
+      case "ios-import-folder-project":
+        void iosRunImportFolderPicker();
         break;
       case "file-save":
         void handleSave();
@@ -720,6 +1284,33 @@
         /* web dev / older host: keep native assumption (no in-app menu) */
       });
 
+    void (async () => {
+      try {
+        const mode = await invoke<string>("app_file_ui_mode");
+        if (mode === "ios-projects") {
+          fileUiMode = "ios-projects";
+          await refreshIosProjects();
+          return;
+        }
+      } catch {
+        /* web dev */
+      }
+      fileUiMode = "desktop";
+      try {
+        const root = await invoke<string | null>("workspace_documents_dir");
+        if (root) {
+          currentFolder = root;
+          try {
+            await loadFolderFiles(root);
+          } catch (e) {
+            console.warn("typst-editor: could not list Documents", e);
+          }
+        }
+      } catch {
+        /* ignore */
+      }
+    })();
+
     const unlistenMenu = listen("menu-event", (event) => {
       dispatchMenuId(event.payload as string);
     });
@@ -796,10 +1387,6 @@
   });
 </script>
 
-<svelte:window
-  onmousemove={isResizing || isResizingSidebar ? onWindowMouseMove : null}
-  onmouseup={stopAllResizing}
-/>
 
 <div
   class="flex flex-col h-screen bg-[var(--app-bg)] text-[var(--app-fg)] overflow-hidden {isResizing ||
@@ -814,7 +1401,9 @@
     {appName}
     {showInAppMenu}
     onInAppMenuAction={dispatchMenuId}
-    inAppMenuLanding={isLandingPage}
+    inAppMenuLanding={isLandingPage || isIosProjectHub}
+    iosMenuHub={isIosProjectHub}
+    iosMenuProject={fileUiMode === "ios-projects" && !!iosProjectPath}
     onShowShortcuts={() => openSettings("shortcuts")}
     colorMode={themePreference}
     onColorModeChange={handleThemePreferenceChange}
@@ -822,15 +1411,15 @@
     filePath={currentFilePath}
     isDirty={currentFileDirty}
     lastSaved={currentFileLastSaved}
-    showPanelToggles={!isLandingPage}
+    showPanelToggles={!isLandingPage && !isIosProjectHub}
     {sidebarVisible}
     onToggleSidebar={() => (sidebarVisible = !sidebarVisible)}
     {previewVisible}
     onTogglePreview={() => (previewVisible = !previewVisible)}
-    showExportPdf={!isLandingPage}
+    showExportPdf={!isLandingPage && !isIosProjectHub}
     {pdfExporting}
     onExportPdf={handleExportPdf}
-    onShowCommandPalette={!isLandingPage
+    onShowCommandPalette={!isLandingPage && !isIosProjectHub
       ? () => {
           const ed = editor;
           if (!ed) return;
@@ -849,18 +1438,155 @@
     initialTab={settingsInitialTab}
   />
 
+  {#if saveAsModalOpen}
+    <!-- svelte-ignore a11y_click_events_have_key_events -->
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div
+      class="fixed inset-0 z-[400] flex items-end justify-center sm:items-center p-4 bg-black/50"
+      onclick={() => closeSaveAsModal()}
+      role="presentation"
+    >
+      <div
+        class="w-full max-w-md rounded-xl border border-[var(--app-border)] bg-[var(--app-bg)] shadow-xl p-4 space-y-4"
+        role="dialog"
+        aria-labelledby="save-as-title"
+        tabindex="0"
+        onclick={(e) => e.stopPropagation()}
+      >
+        <h2 id="save-as-title" class="text-lg font-semibold text-[var(--app-fg)]">
+          {saveAsIntent === "newFile" && iosProjectPath
+            ? "New file"
+            : saveAsIntent === "newFile"
+              ? "Save document as…"
+              : "Save as…"}
+        </h2>
+        <p class="text-sm text-[var(--app-fg-secondary)]">
+          {#if saveAsIntent === "newFile" && iosProjectPath}
+            Creates a new .typ in this project and saves it immediately. Your current file is
+            saved first if it has unsaved changes.
+          {:else if iosProjectPath}
+            Saved inside project “{iosProjectTitle}” (app Documents only).
+          {:else}
+            File name in app Documents (shown in Files → On My iPhone → {appName})
+          {/if}
+        </p>
+        <input
+          type="text"
+          bind:value={saveAsFilename}
+          class="w-full rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-elevated)] px-3 py-2.5 text-[var(--app-fg)] text-base"
+          placeholder="untitled.typ"
+          autocomplete="off"
+          autocapitalize="off"
+          enterkeyhint="done"
+        />
+        <div class="flex justify-end gap-2 pt-2">
+          <button
+            type="button"
+            class="px-4 py-2 rounded-lg text-sm font-medium text-[var(--app-fg-secondary)] hover:bg-[var(--app-btn-ghost-hover)]"
+            onclick={() => closeSaveAsModal()}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            class="px-4 py-2 rounded-lg text-sm font-semibold bg-blue-600 hover:bg-blue-500 text-white"
+            onclick={() => void confirmSaveAsModal()}
+          >
+            Save
+          </button>
+        </div>
+      </div>
+    </div>
+  {/if}
+
+  {#if iosImportFolderOpen}
+    <!-- svelte-ignore a11y_click_events_have_key_events -->
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div
+      class="fixed inset-0 z-[400] flex items-end sm:items-center justify-center p-4 bg-black/50"
+      onclick={() => {
+        iosImportFolderOpen = false;
+        iosImportFolderPath = null;
+        iosImportFolderError = "";
+      }}
+      role="presentation"
+    >
+      <div
+        class="w-full max-w-md rounded-xl border border-[var(--app-border)] bg-[var(--app-bg)] shadow-xl p-4 space-y-4"
+        role="dialog"
+        aria-labelledby="import-folder-title"
+        tabindex="0"
+        onclick={(e) => e.stopPropagation()}
+      >
+        <h2 id="import-folder-title" class="text-lg font-semibold text-[var(--app-fg)]">
+          Import project from ZIP
+        </h2>
+        <p class="text-xs text-[var(--app-fg-secondary)]">
+          The archive is extracted into a new project (same skips as desktop:
+          <code class="text-[10px]">.git</code>, <code class="text-[10px]">node_modules</code>, etc.).
+          If the ZIP has a single top-level folder, that wrapper is stripped. Missing
+          <code class="text-[10px]">main.typ</code> is added. Pick a unique project title.
+        </p>
+        <input
+          type="text"
+          bind:value={iosImportFolderTitle}
+          placeholder="Project title"
+          class="w-full rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-elevated)] px-3 py-2.5 text-[var(--app-fg)] text-base"
+          autocomplete="off"
+        />
+        {#if iosImportFolderError}
+          <p class="text-sm text-red-600 dark:text-red-400" role="alert">
+            {iosImportFolderError}
+          </p>
+        {/if}
+        <div class="flex justify-end gap-2">
+          <button
+            type="button"
+            class="px-4 py-2 rounded-lg text-sm text-[var(--app-fg-secondary)]"
+            onclick={() => {
+              iosImportFolderOpen = false;
+              iosImportFolderPath = null;
+              iosImportFolderError = "";
+            }}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            class="px-4 py-2 rounded-lg text-sm font-semibold bg-blue-600 text-white"
+            onclick={() => void iosConfirmImportFolderAsProject()}
+          >
+            Import
+          </button>
+        </div>
+      </div>
+    </div>
+  {/if}
+
   <div
     bind:this={mainLayout}
     class="flex flex-1 w-full min-h-0 overflow-hidden relative"
   >
-    {#if isLandingPage}
-      <InitialPage
+    {#if isIosProjectHub}
+      <IosProjectHub
         {appName}
-        onNewFile={() => handleShortcutCommand("file.new")}
-        onOpenFile={handleOpenFile}
-        onOpenFolder={handleOpenFolder}
+        projects={iosProjectsList}
+        onRefresh={refreshIosProjects}
+        onOpenProject={(p) => void enterIosProject(p)}
+        onCreateProject={iosCreateProjectFlow}
+        onRenameProject={iosOnRenameProject}
+        onDeleteProject={iosOnDeleteProject}
+        onImportFolder={() => void iosRunImportFolderPicker()}
       />
-    {/if}
+    {:else}
+      {#if isLandingPage}
+        <InitialPage
+          {appName}
+          onNewFile={() => handleShortcutCommand("file.new")}
+          onOpenFile={handleOpenFile}
+          onOpenFolder={handleOpenFolder}
+        />
+      {/if}
 
     {#if sidebarVisible}
       <Sidebar
@@ -872,17 +1598,25 @@
         onSelectFile={openFileByPath}
         onCloseFile={handleCloseFile}
         onRefreshFolder={handleRefreshFolderExplorer}
+        iosProjectTitle={iosProjectPath ? iosProjectTitle : null}
+        onIosBackToProjects={() => void leaveIosProject()}
       />
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div
-        onmousedown={handleSidebarGripMouseDown}
-        class="w-1 cursor-col-resize bg-[var(--app-grip)] hover:bg-[var(--app-grip-hover)] transition-colors shrink-0 flex items-center justify-center z-10 relative group {isResizingSidebar
-          ? 'bg-[var(--app-grip-active)]'
-          : ''}"
+        onpointerdown={handleSidebarGripPointerDown}
+        class="touch-none shrink-0 z-10 relative group flex w-2 items-stretch justify-center cursor-col-resize"
         title="Drag to resize sidebar"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize sidebar"
       >
         <div
-          class="absolute h-10 w-6 flex items-center justify-center rounded-md bg-[var(--app-bg)] border border-[var(--app-border)] opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none"
+          class="w-px self-stretch min-h-[120px] max-h-[80vh] my-auto rounded-full transition-colors bg-[var(--app-grip)] hover:bg-[var(--app-grip-hover)] {isResizingSidebar
+            ? 'bg-[var(--app-grip-active)]'
+            : ''}"
+        ></div>
+        <div
+          class="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 h-10 w-6 flex items-center justify-center rounded-md bg-[var(--app-bg)] border border-[var(--app-border)] opacity-0 sm:group-hover:opacity-100 transition-opacity max-sm:hidden"
         >
           <GripVertical size={16} class="text-[var(--app-icon-muted)]" />
         </div>
@@ -923,13 +1657,19 @@
       {#if previewVisible}
         <!-- svelte-ignore a11y_no_static_element_interactions -->
         <div
-          onmousedown={handleEditorSplitMouseDown}
-          class="w-1 cursor-col-resize bg-[var(--app-grip)] hover:bg-[var(--app-grip-hover)] transition-colors flex items-center justify-center z-10 relative group shrink-0 {isResizing
-            ? 'bg-[var(--app-grip-active)]'
-            : ''}"
+          onpointerdown={handleEditorSplitPointerDown}
+          class="touch-none shrink-0 z-10 relative group flex w-2 items-stretch justify-center cursor-col-resize"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize editor and preview"
         >
           <div
-            class="absolute h-10 w-6 flex items-center justify-center rounded-md bg-[var(--app-bg)] border border-[var(--app-border)] opacity-0 group-hover:opacity-100 transition-opacity"
+            class="w-px self-stretch min-h-[120px] max-h-[80vh] my-auto rounded-full transition-colors bg-[var(--app-grip)] hover:bg-[var(--app-grip-hover)] {isResizing
+              ? 'bg-[var(--app-grip-active)]'
+              : ''}"
+          ></div>
+          <div
+            class="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 h-10 w-6 flex items-center justify-center rounded-md bg-[var(--app-bg)] border border-[var(--app-border)] opacity-0 sm:group-hover:opacity-100 transition-opacity max-sm:hidden"
           >
             <GripVertical size={16} class="text-[var(--app-icon-muted)]" />
           </div>
@@ -950,6 +1690,7 @@
         </div>
       {/if}
     </div>
+    {/if}
   </div>
 </div>
 

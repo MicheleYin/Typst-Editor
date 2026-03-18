@@ -1,0 +1,5 @@
+# Rust (cargo build / cargo check in this crate)
+/target/
+
+# SwiftPM (swift-rs builds the iOS package here)
+/ios/.build/

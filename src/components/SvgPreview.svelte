@@ -6,6 +6,8 @@
     ZoomOut,
     RotateCcw,
     AlertTriangle,
+    Copy,
+    Check,
   } from "lucide-svelte";
 
   type CompileDiagnostic = {
@@ -47,6 +49,73 @@
   let isPanning = $state(false);
   let startX = 0;
   let startY = 0;
+  let copiedBanner = $state(false);
+  let copiedDiagnostics = $state(false);
+
+  async function copyToClipboard(text: string, kind: "banner" | "diagnostics") {
+    const t = text.trim();
+    if (!t) return;
+    try {
+      await navigator.clipboard.writeText(t);
+      if (kind === "banner") {
+        copiedBanner = true;
+        setTimeout(() => {
+          copiedBanner = false;
+        }, 2000);
+      } else {
+        copiedDiagnostics = true;
+        setTimeout(() => {
+          copiedDiagnostics = false;
+        }, 2000);
+      }
+    } catch {
+      try {
+        const ta = document.createElement("textarea");
+        ta.value = t;
+        ta.style.position = "fixed";
+        ta.style.left = "-9999px";
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand("copy");
+        document.body.removeChild(ta);
+        if (kind === "banner") {
+          copiedBanner = true;
+          setTimeout(() => {
+            copiedBanner = false;
+          }, 2000);
+        } else {
+          copiedDiagnostics = true;
+          setTimeout(() => {
+            copiedDiagnostics = false;
+          }, 2000);
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+
+  function diagnosticsAsText(): string {
+    return diagnostics
+      .map((d: CompileDiagnostic, i: number) => {
+        const loc = formatLocation(d);
+        const lines = [`[${i + 1}] ${loc ? `${loc}\n` : ""}${d.message}`];
+        if (d.hints?.length) {
+          lines.push("Hints:", ...d.hints.map((h: string) => `  - ${h}`));
+        }
+        if (d.trace?.length) {
+          for (const t of d.trace) {
+            let s = `  ↳ ${t.message}`;
+            if (t.line != null) {
+              s += ` (line ${t.line}${t.column != null ? `, col ${t.column}` : ""}${t.file ? ` · ${t.file}` : ""})`;
+            }
+            lines.push(s);
+          }
+        }
+        return lines.join("\n");
+      })
+      .join("\n\n---\n\n");
+  }
 
   const SCALE_MIN = 0.25;
   const SCALE_MAX = 6;
@@ -356,10 +425,24 @@
 <div class="h-full relative bg-[var(--preview-pane-bg)] flex flex-col min-h-0">
   {#if error}
     <div
-      class="shrink-0 px-3 py-2 bg-red-950/90 text-red-200 text-xs border-b border-red-800"
+      class="shrink-0 flex items-start gap-2 px-3 py-2 bg-red-950/90 text-red-200 text-xs border-b border-red-800"
       role="alert"
     >
-      {error}
+      <span class="flex-1 min-w-0 break-words">{error}</span>
+      <button
+        type="button"
+        onclick={() => copyToClipboard(error, "banner")}
+        class="shrink-0 flex items-center gap-1 rounded-md px-2 py-1 bg-red-900/80 hover:bg-red-800 text-red-100 text-[11px] font-medium border border-red-700/60"
+        title="Copy error"
+      >
+        {#if copiedBanner}
+          <Check size={14} class="text-green-400" />
+          Copied
+        {:else}
+          <Copy size={14} />
+          Copy
+        {/if}
+      </button>
     </div>
   {/if}
 
@@ -378,8 +461,26 @@
     <div
       class="shrink-0 max-h-[38vh] min-h-0 overflow-y-auto border-b border-red-200 bg-red-50/95"
     >
-      <div class="px-3 py-2 text-[10px] font-bold uppercase tracking-wide text-red-800">
-        Compile error{diagnostics.length > 1 ? "s" : ""} ({diagnostics.length})
+      <div
+        class="flex items-center justify-between gap-2 px-3 py-2 border-b border-red-100/80 bg-red-100/40"
+      >
+        <div class="text-[10px] font-bold uppercase tracking-wide text-red-800">
+          Compile error{diagnostics.length > 1 ? "s" : ""} ({diagnostics.length})
+        </div>
+        <button
+          type="button"
+          onclick={() => copyToClipboard(diagnosticsAsText(), "diagnostics")}
+          class="shrink-0 flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium text-red-900 bg-white/90 hover:bg-white border border-red-200 shadow-sm"
+          title="Copy all compile errors to clipboard"
+        >
+          {#if copiedDiagnostics}
+            <Check size={14} class="text-green-600" />
+            Copied
+          {:else}
+            <Copy size={14} />
+            Copy all
+          {/if}
+        </button>
       </div>
       <div class="px-3 pb-3 space-y-4">
         {#each diagnostics as d, idx (idx)}

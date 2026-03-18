@@ -1,0 +1,47 @@
+{
+  "$schema": "../gen/schemas/mobile-schema.json",
+  "identifier": "mobile-documents",
+  "description": "App sandbox Documents: list/read/write .typ files on iOS/Android ($DOCUMENT)",
+  "windows": ["main"],
+  "platforms": ["iOS", "android"],
+  "permissions": [
+    "fs:allow-document-read-recursive",
+    "fs:allow-document-write-recursive",
+    {
+      "identifier": "fs:allow-read-dir",
+      "allow": ["$DOCUMENT", "$DOCUMENT/**"]
+    },
+    {
+      "identifier": "fs:allow-read-text-file",
+      "allow": [
+        "$DOCUMENT/**",
+        "$DOCUMENT/Projects/*/.typst-editor-project.json"
+      ]
+    },
+    {
+      "identifier": "fs:allow-write-text-file",
+      "allow": [
+        "$DOCUMENT/**",
+        "$DOCUMENT/Projects/*/.typst-editor-project.json"
+      ]
+    },
+    {
+      "identifier": "fs:allow-exists",
+      "allow": [
+        "$DOCUMENT/**",
+        "$DOCUMENT/Projects/*/.typst-editor-project.json"
+      ]
+    },
+    {
+      "identifier": "fs:allow-mkdir",
+      "allow": ["$DOCUMENT", "$DOCUMENT/**"]
+    },
+    {
+      "identifier": "fs:allow-remove",
+      "allow": [
+        "$DOCUMENT/**",
+        "$DOCUMENT/Projects/*/.typst-editor-project.json"
+      ]
+    }
+  ]
+}

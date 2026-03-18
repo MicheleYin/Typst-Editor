@@ -54,11 +54,15 @@
     showInAppMenu = false,
     onInAppMenuAction,
     inAppMenuLanding = false,
+    iosMenuHub = false,
+    iosMenuProject = false,
   } = $props<{
     appName: string;
     showInAppMenu?: boolean;
     onInAppMenuAction?: (id: string) => void;
     inAppMenuLanding?: boolean;
+    iosMenuHub?: boolean;
+    iosMenuProject?: boolean;
     onShowShortcuts: () => void;
     colorMode?: string;
     onColorModeChange?: (mode: string) => void;
@@ -92,11 +96,21 @@
 </script>
 
 <header
-  class="h-auto py-2 bg-[var(--app-bg)] border-b border-[var(--app-border)] flex items-center px-4 gap-2 z-[80] select-none"
+  class="h-auto pb-2 bg-[var(--app-bg)] border-b border-[var(--app-border)] flex items-center px-4 gap-2 z-[80] select-none {showInAppMenu
+    ? ''
+    : 'pt-2'}"
+  style:padding-top={showInAppMenu
+    ? "max(0.75rem, env(safe-area-inset-top, 0px))"
+    : undefined}
 >
   <div class="flex items-center gap-1 mr-4">
     {#if showInAppMenu && onInAppMenuAction}
-      <InAppMenu onAction={onInAppMenuAction} landingPage={inAppMenuLanding} />
+      <InAppMenu
+        onAction={onInAppMenuAction}
+        landingPage={inAppMenuLanding}
+        {iosMenuHub}
+        {iosMenuProject}
+      />
     {/if}
     <img
       src={appIcon}

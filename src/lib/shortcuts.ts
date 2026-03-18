@@ -301,6 +301,42 @@ export function formatKeys(keys: string): string {
     .join(' ');
 }
 
+/** In-app menu row id → shortcut label (respects user overrides for app commands). */
+export function menuShortcutLabel(
+  menuId: string,
+  overrides: Record<string, string>,
+): string {
+  const appMap: Record<string, keyof typeof APP_SHORTCUT_DEFAULT_KEYS> = {
+    'file-new': 'file.new',
+    'file-open': 'file.open',
+    'file-open-folder': 'file.openFolder',
+    'file-save': 'file.save',
+    'file-save-as': 'file.saveAs',
+    'view-zoom-in': 'view.zoomIn',
+    'view-zoom-out': 'view.zoomOut',
+    'view-reset-zoom': 'view.resetZoom',
+    'view-toggle-sidebar': 'view.toggleSidebar',
+    'help-shortcuts': 'settings.shortcuts',
+  };
+  const appKey = appMap[menuId];
+  if (appKey) {
+    const raw = overrides[appKey] ?? APP_SHORTCUT_DEFAULT_KEYS[appKey];
+    if (raw) return formatKeys(normalizeKeySpec(raw));
+  }
+  const fixed: Record<string, string> = {
+    'file-export-pdf': 'Mod+Shift+E',
+    'edit-undo': 'Mod+Z',
+    'edit-redo': 'Mod+Shift+Z',
+    'edit-cut': 'Mod+X',
+    'edit-copy': 'Mod+C',
+    'edit-paste': 'Mod+V',
+    'edit-select-all': 'Mod+A',
+  };
+  const ch = fixed[menuId];
+  if (ch) return formatKeys(normalizeKeySpec(ch));
+  return '';
+}
+
 /**
  * Build a stable chord string from a keydown event (uses physical KeyCode, not e.key layout).
  * Cmd+/ → Mod+Slash (parses to the same binding as Monaco’s ⌘/).

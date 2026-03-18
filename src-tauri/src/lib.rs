@@ -1,4 +1,5 @@
 use std::fs;
+use std::io::copy;
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -863,6 +864,616 @@ fn app_has_native_menu() -> bool {
     cfg!(desktop)
 }
 
+/// iOS uses a project-based file UI; everything else uses desktop open/save/folder.
+#[command]
+fn app_file_ui_mode() -> &'static str {
+    #[cfg(target_os = "ios")]
+    {
+        "ios-projects"
+    }
+    #[cfg(not(target_os = "ios"))]
+    {
+        "desktop"
+    }
+}
+
+/// On iOS, the app sandbox Documents directory (Files app → On My iPhone → app).
+/// Ensures the directory exists. Returns `None` on other platforms.
+#[command]
+fn workspace_documents_dir(app: tauri::AppHandle) -> Result<Option<String>, String> {
+    #[cfg(target_os = "ios")]
+    {
+        let p = app
+            .path()
+            .document_dir()
+            .map_err(|e| e.to_string())?;
+        fs::create_dir_all(&p).map_err(|e| e.to_string())?;
+        Ok(Some(p.to_string_lossy().into_owned()))
+    }
+    #[cfg(not(target_os = "ios"))]
+    {
+        Ok(None)
+    }
+}
+
+#[cfg(target_os = "ios")]
+fn validate_ios_project_folder_id(id: &str) -> Result<(), String> {
+    if id.is_empty() || id.len() > 200 {
+        return Err("Invalid project folder.".into());
+    }
+    if id.contains("..") || id.contains('/') || id.contains('\\') {
+        return Err("Invalid project folder.".into());
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "ios")]
+fn zip_project_directory(project_dir: &Path, output_path: &Path) -> Result<(), String> {
+    let out_file = fs::File::create(output_path).map_err(|e| e.to_string())?;
+    let mut zip = zip::ZipWriter::new(out_file);
+    let options = zip::write::SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated);
+
+    let out_canon = fs::canonicalize(output_path).map_err(|e| e.to_string())?;
+
+    fn add_dir(
+        zip: &mut zip::ZipWriter<fs::File>,
+        project_root: &Path,
+        dir: &Path,
+        options: zip::write::SimpleFileOptions,
+        out_canon: &Path,
+    ) -> Result<(), String> {
+        for entry in fs::read_dir(dir).map_err(|e| e.to_string())? {
+            let entry = entry.map_err(|e| e.to_string())?;
+            let path = entry.path();
+            if path.is_dir() {
+                add_dir(zip, project_root, &path, options, out_canon)?;
+            } else if path.is_file() {
+                if let Ok(c) = fs::canonicalize(&path) {
+                    if c == *out_canon {
+                        continue;
+                    }
+                }
+                let rel = path
+                    .strip_prefix(project_root)
+                    .map_err(|e| e.to_string())?;
+                let name = rel.to_string_lossy().replace('\\', "/");
+                if name.is_empty() {
+                    continue;
+                }
+                zip.start_file(name, options)
+                    .map_err(|e| e.to_string())?;
+                let mut f = fs::File::open(&path).map_err(|e| e.to_string())?;
+                std::io::copy(&mut f, zip).map_err(|e| e.to_string())?;
+            }
+        }
+        Ok(())
+    }
+
+    add_dir(&mut zip, project_dir, project_dir, options, &out_canon)?;
+    zip.finish().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Zip all files under `Documents/Projects/<folderId>/` (iOS only).
+#[command]
+fn export_ios_project_zip(
+    app: tauri::AppHandle,
+    folder_id: String,
+    output_path: String,
+) -> Result<(), String> {
+    #[cfg(target_os = "ios")]
+    {
+        validate_ios_project_folder_id(&folder_id)?;
+        let doc = app
+            .path()
+            .document_dir()
+            .map_err(|e| e.to_string())?;
+        let project = doc.join("Projects").join(&folder_id);
+        if !project.is_dir() {
+            return Err("Project folder not found.".into());
+        }
+        let out = PathBuf::from(output_path.trim());
+        if out.as_os_str().is_empty() {
+            return Err("Invalid export path.".into());
+        }
+        zip_project_directory(&project, &out)
+    }
+    #[cfg(not(target_os = "ios"))]
+    {
+        let _ = (app, folder_id, output_path);
+        Err("Export project is only available in the iOS app.".into())
+    }
+}
+
+/// Folder name = title with only path-forbidden characters removed (spaces & casing kept).
+#[cfg(target_os = "ios")]
+fn project_folder_name_from_title(title: &str) -> String {
+    let t = title.trim();
+    let s: String = t
+        .chars()
+        .filter(|c| {
+            !matches!(c, '/' | '\\' | ':' | '\0' | '*' | '?' | '"' | '<' | '>' | '|')
+                && !c.is_control()
+        })
+        .collect();
+    let s = s.trim();
+    if s.is_empty() {
+        return "Untitled".to_string();
+    }
+    let s: String = s.chars().take(200).collect();
+    if s.is_empty() {
+        "Untitled".into()
+    } else {
+        s
+    }
+}
+
+#[cfg(target_os = "ios")]
+fn projects_dir_has_folder_ci(
+    projects: &Path,
+    name_lower: &str,
+    exclude_name_ci_equal: Option<&str>,
+) -> bool {
+    let Ok(rd) = fs::read_dir(projects) else {
+        return false;
+    };
+    for e in rd.flatten() {
+        if !e.path().is_dir() {
+            continue;
+        }
+        let n = e.file_name().to_string_lossy().into_owned();
+        let nl = n.to_lowercase();
+        if exclude_name_ci_equal.is_some_and(|ex| ex.to_lowercase() == nl) {
+            continue;
+        }
+        if nl == name_lower {
+            return true;
+        }
+    }
+    false
+}
+
+#[cfg(target_os = "ios")]
+const IMPORT_SKIP_DIR_NAMES: &[&str] = &[
+    ".git",
+    "node_modules",
+    "target",
+    ".svn",
+    "__pycache__",
+];
+
+#[cfg(target_os = "ios")]
+fn copy_ios_import_tree(src: &Path, dst_base: &Path, src_root: &Path) -> Result<(), String> {
+    for entry in fs::read_dir(src).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let src_path = entry.path();
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if src_path.is_dir() && IMPORT_SKIP_DIR_NAMES.iter().any(|s| *s == name.as_str()) {
+            continue;
+        }
+        let rel = src_path
+            .strip_prefix(src_root)
+            .map_err(|e| e.to_string())?;
+        let dst_path = dst_base.join(rel);
+        if src_path.is_dir() {
+            fs::create_dir_all(&dst_path).map_err(|e| e.to_string())?;
+            copy_ios_import_tree(&src_path, dst_base, src_root)?;
+        } else if src_path.is_file() {
+            if let Some(p) = dst_path.parent() {
+                fs::create_dir_all(p).map_err(|e| e.to_string())?;
+            }
+            fs::copy(&src_path, &dst_path).map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "ios")]
+fn ios_import_project_conflicts(
+    doc: &Path,
+    folder_name: &str,
+    title_lower: &str,
+) -> Result<Option<String>, String> {
+    let projects = doc.join("Projects");
+    if projects_dir_has_folder_ci(&projects, &folder_name.to_lowercase(), None) {
+        return Ok(Some(format!(
+            "A folder named \"{folder_name}\" already exists. Use a different title."
+        )));
+    }
+    if projects.is_dir() {
+        for e in fs::read_dir(&projects).map_err(|e| e.to_string())? {
+            let p = e.map_err(|e| e.to_string())?.path();
+            if !p.is_dir() {
+                continue;
+            }
+            let meta = p.join(".typst-editor-project.json");
+            if let Ok(s) = fs::read_to_string(&meta) {
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&s) {
+                    if let Some(t) = v.get("title").and_then(|x| x.as_str()) {
+                        if t.trim().to_lowercase() == title_lower {
+                            return Ok(Some(
+                                "A project with this name already exists.".into(),
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(None)
+}
+
+/// iOS document picker returns `file:///...` URLs; Rust must map them to paths before `open()`.
+#[cfg(target_os = "ios")]
+fn ios_path_from_document_picker(raw: &str) -> Result<PathBuf, String> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return Err("Empty path.".into());
+    }
+    let path = if raw.starts_with("file:") {
+        let url = url::Url::parse(raw).map_err(|e| format!("Invalid file URL: {e}"))?;
+        url.to_file_path().map_err(|_| {
+            String::from("Could not resolve filesystem path from picked file.")
+        })?
+    } else {
+        PathBuf::from(raw)
+    };
+    match fs::canonicalize(&path) {
+        Ok(p) => Ok(p),
+        Err(_) if path.is_file() || path.is_dir() => Ok(path),
+        Err(e) => Err(format!("Could not access path: {e}")),
+    }
+}
+
+/// Copy a user-picked folder into `Documents/Projects/<folder name>/` as a new project (iOS only).
+#[command]
+fn import_ios_project_from_folder(
+    app: tauri::AppHandle,
+    source_path: String,
+    title: String,
+) -> Result<serde_json::Value, String> {
+    #[cfg(target_os = "ios")]
+    {
+        let raw = source_path.trim();
+        if raw.is_empty() {
+            return Err("No folder selected.".into());
+        }
+        let source = ios_path_from_document_picker(raw)?;
+        if !source.is_dir() {
+            return Err("Please choose a folder.".into());
+        }
+        let title_owned = {
+            let t = title.trim();
+            if t.is_empty() {
+                "Untitled".to_string()
+            } else {
+                t.to_string()
+            }
+        };
+        let folder_name = project_folder_name_from_title(&title_owned);
+        let doc = app
+            .path()
+            .document_dir()
+            .map_err(|e| e.to_string())?;
+        fs::create_dir_all(doc.join("Projects")).map_err(|e| e.to_string())?;
+        if let Some(msg) =
+            ios_import_project_conflicts(&doc, &folder_name, &title_owned.to_lowercase())?
+        {
+            return Err(msg);
+        }
+        let dest = doc.join("Projects").join(&folder_name);
+        fs::create_dir_all(&dest).map_err(|e| e.to_string())?;
+        let copy_result = copy_ios_import_tree(&source, &dest, &source);
+        if let Err(e) = copy_result {
+            let _ = fs::remove_dir_all(&dest);
+            return Err(format!("Copy failed: {e}"));
+        }
+        if !dest.join("main.typ").is_file() {
+            fs::write(dest.join("main.typ"), [])
+                .map_err(|e| format!("Could not add main.typ: {e}"))?;
+        }
+        let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        let meta = serde_json::json!({
+            "version": 1,
+            "title": title_owned,
+            "createdAt": now,
+            "updatedAt": now,
+        });
+        fs::write(
+            dest.join(".typst-editor-project.json"),
+            serde_json::to_string_pretty(&meta).map_err(|e| e.to_string())?,
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(serde_json::json!({
+            "folderId": folder_name,
+            "absPath": dest.to_string_lossy(),
+        }))
+    }
+    #[cfg(not(target_os = "ios"))]
+    {
+        let _ = (app, source_path, title);
+        Err("Folder import is only available in the iOS app.".into())
+    }
+}
+
+#[cfg(target_os = "ios")]
+fn ios_zip_strip_prefix(names: &[String]) -> usize {
+    let trimmed: Vec<&str> = names
+        .iter()
+        .map(|s| s.trim().trim_start_matches('/').trim_end_matches('/'))
+        .filter(|s| !s.is_empty())
+        .collect();
+    if trimmed.is_empty() {
+        return 0;
+    }
+    let first = trimmed[0];
+    let Some((root, _)) = first.split_once('/') else {
+        return 0;
+    };
+    for n in &trimmed {
+        if *n == root || n.starts_with(&format!("{root}/")) {
+            continue;
+        }
+        return 0;
+    }
+    root.len() + 1
+}
+
+#[cfg(target_os = "ios")]
+fn ios_zip_output_path(dest: &Path, rel: &str) -> Option<PathBuf> {
+    let rel = rel.replace('\\', "/");
+    let rel = rel.trim_matches('/');
+    if rel.is_empty() {
+        return None;
+    }
+    for p in rel.split('/') {
+        if p.is_empty() || p == "." || p == ".." {
+            return None;
+        }
+        if IMPORT_SKIP_DIR_NAMES.iter().any(|s| *s == p) {
+            return None;
+        }
+    }
+    Some(dest.join(rel))
+}
+
+/// Import a ZIP (e.g. from Files: long-press folder → Compress) into `Documents/Projects/<folder>/`.
+/// iOS: Tauri does not support `directory: true` folder pickers on mobile; ZIP is the supported path.
+#[command]
+fn import_ios_project_from_zip(
+    app: tauri::AppHandle,
+    zip_path: String,
+    title: String,
+) -> Result<serde_json::Value, String> {
+    #[cfg(target_os = "ios")]
+    {
+        use zip::ZipArchive;
+
+        let raw = zip_path.trim();
+        if raw.is_empty() {
+            return Err("No file selected.".into());
+        }
+        let zpath = ios_path_from_document_picker(raw)?;
+        if !zpath.is_file() {
+            return Err("Please choose a .zip file.".into());
+        }
+        let title_owned = {
+            let t = title.trim();
+            if t.is_empty() {
+                "Untitled".to_string()
+            } else {
+                t.to_string()
+            }
+        };
+        let folder_name = project_folder_name_from_title(&title_owned);
+        let doc = app
+            .path()
+            .document_dir()
+            .map_err(|e| e.to_string())?;
+        fs::create_dir_all(doc.join("Projects")).map_err(|e| e.to_string())?;
+        if let Some(msg) =
+            ios_import_project_conflicts(&doc, &folder_name, &title_owned.to_lowercase())?
+        {
+            return Err(msg);
+        }
+        let dest = doc.join("Projects").join(&folder_name);
+
+        let names: Vec<String> = {
+            let file = fs::File::open(&zpath).map_err(|e| e.to_string())?;
+            let mut archive = ZipArchive::new(file).map_err(|e| format!("Invalid ZIP: {e}"))?;
+            (0..archive.len())
+                .map(|i| {
+                    archive
+                        .by_index(i)
+                        .map(|e| e.name().to_string())
+                        .map_err(|e| e.to_string())
+                })
+                .collect::<Result<_, _>>()?
+        };
+        let strip = ios_zip_strip_prefix(&names);
+
+        let file = fs::File::open(&zpath).map_err(|e| e.to_string())?;
+        let mut archive = ZipArchive::new(file).map_err(|e| format!("Invalid ZIP: {e}"))?;
+        fs::create_dir_all(&dest).map_err(|e| e.to_string())?;
+
+        for i in 0..archive.len() {
+            let mut entry = archive.by_index(i).map_err(|e| e.to_string())?;
+            let raw_name = entry.name().to_string();
+            let rel = if strip > 0 && raw_name.len() >= strip {
+                raw_name[strip..].to_string()
+            } else {
+                raw_name.clone()
+            };
+            let rel = rel.trim_start_matches('/').to_string();
+            let rel_trim = rel.trim_end_matches('/').to_string();
+            if rel_trim.is_empty() {
+                continue;
+            }
+            let is_dir = rel.ends_with('/') || entry.is_dir();
+            let Some(out_path) = ios_zip_output_path(&dest, &rel_trim) else {
+                continue;
+            };
+            if is_dir {
+                fs::create_dir_all(&out_path).map_err(|e| format!("Extract failed: {e}"))?;
+                continue;
+            }
+            if let Some(parent) = out_path.parent() {
+                fs::create_dir_all(parent).map_err(|e| format!("Extract failed: {e}"))?;
+            }
+            let mut out_f = fs::File::create(&out_path).map_err(|e| format!("Extract failed: {e}"))?;
+            copy(&mut entry, &mut out_f).map_err(|e| format!("Extract failed: {e}"))?;
+        }
+
+        if !dest.join("main.typ").is_file() {
+            fs::write(dest.join("main.typ"), [])
+                .map_err(|e| format!("Could not add main.typ: {e}"))?;
+        }
+        let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        let meta = serde_json::json!({
+            "version": 1,
+            "title": title_owned,
+            "createdAt": now,
+            "updatedAt": now,
+        });
+        fs::write(
+            dest.join(".typst-editor-project.json"),
+            serde_json::to_string_pretty(&meta).map_err(|e| e.to_string())?,
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(serde_json::json!({
+            "folderId": folder_name,
+            "absPath": dest.to_string_lossy(),
+        }))
+    }
+    #[cfg(not(target_os = "ios"))]
+    {
+        let _ = (app, zip_path, title);
+        Err("ZIP project import is only available in the iOS app.".into())
+    }
+}
+
+/// Rename `Projects/<folderId>/` to match `new_title` folder name and update metadata (iOS only).
+#[command]
+fn rename_ios_project(
+    app: tauri::AppHandle,
+    folder_id: String,
+    new_title: String,
+) -> Result<serde_json::Value, String> {
+    #[cfg(target_os = "ios")]
+    {
+        let folder_id = folder_id.trim();
+        if folder_id.is_empty()
+            || folder_id.contains("..")
+            || folder_id.contains('/')
+            || folder_id.contains('\\')
+        {
+            return Err("Invalid project.".into());
+        }
+        let title_owned = {
+            let t = new_title.trim();
+            if t.is_empty() {
+                "Untitled".to_string()
+            } else {
+                t.to_string()
+            }
+        };
+        let new_name = project_folder_name_from_title(&title_owned);
+        let doc = app
+            .path()
+            .document_dir()
+            .map_err(|e| e.to_string())?;
+        let projects_dir = doc.join("Projects");
+        let old_path = projects_dir.join(folder_id);
+        if !old_path.is_dir() {
+            return Err("Project not found.".into());
+        }
+
+        let title_lower = title_owned.to_lowercase();
+        if let Ok(rd) = fs::read_dir(&projects_dir) {
+            for e in rd.flatten() {
+                let p = e.path();
+                if !p.is_dir() {
+                    continue;
+                }
+                if p.file_name().and_then(|n| n.to_str()) == Some(folder_id) {
+                    continue;
+                }
+                let meta = p.join(".typst-editor-project.json");
+                if let Ok(s) = fs::read_to_string(&meta) {
+                    if let Ok(v) = serde_json::from_str::<serde_json::Value>(&s) {
+                        if let Some(t) = v.get("title").and_then(|x| x.as_str()) {
+                            if t.trim().to_lowercase() == title_lower {
+                                return Err("A project with this name already exists.".into());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        let project_dir = if folder_id == new_name.as_str() {
+            old_path.clone()
+        } else if folder_id.to_lowercase() == new_name.to_lowercase() {
+            // Case-only change on case-insensitive volume: keep path, update title in meta
+            old_path.clone()
+        } else if projects_dir_has_folder_ci(
+            &projects_dir,
+            &new_name.to_lowercase(),
+            Some(folder_id),
+        ) {
+            return Err(format!(
+                "A folder named \"{new_name}\" already exists. Use a different title."
+            ));
+        } else {
+            let new_path = projects_dir.join(&new_name);
+            fs::rename(&old_path, &new_path)
+                .map_err(|e| format!("Could not rename folder: {e}"))?;
+            new_path
+        };
+
+        let out_folder_id = project_dir
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or(new_name.as_str())
+            .to_string();
+
+        let meta_path = project_dir.join(".typst-editor-project.json");
+        let meta_s = fs::read_to_string(&meta_path).map_err(|e| e.to_string())?;
+        let mut m: serde_json::Value =
+            serde_json::from_str(&meta_s).map_err(|e| e.to_string())?;
+        if let Some(obj) = m.as_object_mut() {
+            obj.insert(
+                "title".into(),
+                serde_json::Value::String(title_owned.clone()),
+            );
+            obj.insert(
+                "updatedAt".into(),
+                serde_json::Value::String(
+                    chrono::Utc::now()
+                        .to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+                ),
+            );
+        }
+        fs::write(
+            &meta_path,
+            serde_json::to_string_pretty(&m).map_err(|e| e.to_string())?,
+        )
+        .map_err(|e| e.to_string())?;
+
+        Ok(serde_json::json!({
+            "folderId": out_folder_id,
+            "absPath": project_dir.to_string_lossy(),
+            "title": title_owned,
+        }))
+    }
+    #[cfg(not(target_os = "ios"))]
+    {
+        let _ = (app, folder_id, new_title);
+        Err("Rename project is only available in the iOS app.".into())
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     #[allow(unused_mut)] // `mut` only needed when `desktop` enables window-state plugin
@@ -1009,6 +1620,12 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             app_has_native_menu,
+            app_file_ui_mode,
+            workspace_documents_dir,
+            export_ios_project_zip,
+            import_ios_project_from_folder,
+            import_ios_project_from_zip,
+            rename_ios_project,
             compile_typst,
             export_typst_pdf,
             typst_engine_version,

@@ -14,7 +14,8 @@
 
 html,
 body,
-#root {
+#root,
+#app {
   margin: 0;
   padding: 0;
   height: 100%;
@@ -23,4 +24,9 @@ body,
   background-color: var(--app-bg, #2c3142);
   color: var(--app-fg, #e2e6f4);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+/* Helps limit double-tap zoom where viewport isn’t locked (e.g. dev in browser). */
+#app {
+  touch-action: manipulation;
 }

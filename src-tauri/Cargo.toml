@@ -33,4 +33,6 @@ typst-assets = { version = "0.14.2", features = ["fonts"] }
 typst-kit = { version = "0.14.2", default-features = true }
 comemo = "0.5.1"
 chrono = "0.4.44"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+url = "2"
 

@@ -1,3 +1,7 @@
+# Rust / Swift build artifacts under path-dependency plugins (if no local .gitignore)
+plugins/**/target/
+plugins/**/ios/.build/
+
 # Logs
 logs
 *.log
