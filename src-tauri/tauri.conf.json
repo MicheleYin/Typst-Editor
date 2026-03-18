@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "typst-editor",
+  "productName": "Typst Editor",
   "version": "0.1.0",
   "identifier": "com.micheleyin.typst-editor",
   "build": {
@@ -12,9 +12,11 @@
   "app": {
     "windows": [
       {
-        "title": "typst-editor",
+        "title": "Typst Editor",
         "width": 800,
-        "height": 600
+        "height": 600,
+        "minWidth": 500,
+        "minHeight": 300
       }
     ],
     "security": {

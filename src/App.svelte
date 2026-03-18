@@ -19,22 +19,10 @@
     shortcutOverrides,
     type ShortcutAction,
   } from "./lib/shortcuts";
+  import { fetchAppDisplayName, defaultNewFileContent } from "./lib/appMeta";
+  import pkg from "../package.json";
 
-  const DEFAULT_CONTENT = `// Welcome to the Typst Editor!
-
-= Introduction
-In this editor, you can write *Typst* code and see the live preview on the right.
-
-== Features
-- Monaco Editor integration
-- Live SVG preview
-- Basic syntax highlighting
-
-#set text(fill: blue)
-#lorem(20)
-
-$ x^2 + y^2 = r^2 $
-`;
+  let appName = $state(pkg.name);
 
   let openFiles = $state<{ path: string; name: string; content: string; isDirty?: boolean; lastSaved?: Date | null }[]>([]);
   let currentFilePath = $state<string | null>(null);
@@ -46,10 +34,63 @@ $ x^2 + y^2 = r^2 $
   let pageCount = $state(0);
   let currentPage = $state(0);
   let error = $state("");
+  /** Last successful compile for the current file (stale preview on error). */
+  let lastValidPages = $state<string[]>([]);
+  let lastValidPageCount = $state(0);
+  type CompileDiagnostic = {
+    file: string | null;
+    line: number | null;
+    column: number | null;
+    message: string;
+    hints: string[];
+    trace: { message: string; line: number | null; column: number | null; file: string | null }[];
+  };
+  let compileDiagnostics = $state<CompileDiagnostic[]>([]);
+
+  let previewPages = $derived(
+    compileDiagnostics.length > 0 && lastValidPages.length > 0
+      ? lastValidPages
+      : pages,
+  );
+  let previewPageCount = $derived(
+    compileDiagnostics.length > 0 && lastValidPages.length > 0
+      ? lastValidPageCount
+      : pageCount,
+  );
+  let showingStalePreview = $derived(
+    compileDiagnostics.length > 0 && lastValidPages.length > 0,
+  );
+
+  $effect(() => {
+    void currentFilePath;
+    lastValidPages = [];
+    lastValidPageCount = 0;
+    pages = [];
+    pageCount = 0;
+    compileDiagnostics = [];
+  });
   const EDITOR_SPLIT_KEY = "typst-editor-editor-split-px";
+  /** Preferred minimum editor width when there is enough space */
   const EDITOR_SPLIT_MIN = 200;
+  /** Allow editor to shrink this narrow so preview keeps min width */
+  const EDITOR_SPLIT_ABS_MIN = 72;
   const PREVIEW_MIN_W = 280;
   const SPLIT_GRIP_PX = 4;
+  /** Matches layout: sidebar + editor/preview region needs at least this (web fallback; Tauri uses minWidth) */
+  const APP_MIN_WIDTH_PX = 760;
+  const APP_MIN_HEIGHT_PX = 480;
+
+  function maxEditorPxForRegion(regionWidth: number): number {
+    return regionWidth - SPLIT_GRIP_PX - PREVIEW_MIN_W;
+  }
+
+  /** Shrink editor width if needed so preview column can stay at least PREVIEW_MIN_W */
+  function clampEditorSplitToRegion() {
+    if (!editorPreviewRegion || !previewVisible) return;
+    const maxEd = maxEditorPxForRegion(editorPreviewRegion.getBoundingClientRect().width);
+    if (editorWidthPx <= maxEd) return;
+    editorWidthPx = Math.round(Math.max(0, Math.min(editorWidthPx, maxEd)));
+  }
   function readStoredEditorSplitPx(): number {
     try {
       const v = parseInt(localStorage.getItem(EDITOR_SPLIT_KEY) ?? "", 10);
@@ -233,28 +274,52 @@ $ x^2 + y^2 = r^2 $
     }
   });
 
-  async function compile(text: string) {
+  async function compile(
+    text: string,
+    pathSnapshot: string | null,
+  ) {
     try {
-      const result = await invoke<{ pages: string[]; page_count: number }>("compile_typst", {
-        content: text,
-      });
-      pages = result.pages;
-      pageCount = result.page_count;
-      if (currentPage >= pageCount && pageCount > 0) {
-        currentPage = pageCount - 1;
-      } else if (pageCount === 0) {
-        currentPage = 0;
+      const result = await invoke<{
+        success: boolean;
+        pages: string[];
+        pageCount: number;
+        diagnostics: CompileDiagnostic[];
+      }>("compile_typst", { content: text });
+      if (currentFilePath !== pathSnapshot || content !== text) return;
+      if (result.success) {
+        pages = result.pages;
+        pageCount = result.pageCount;
+        lastValidPages = [...result.pages];
+        lastValidPageCount = result.pageCount;
+        compileDiagnostics = [];
+        if (currentPage >= pageCount && pageCount > 0) {
+          currentPage = pageCount - 1;
+        } else if (pageCount === 0) {
+          currentPage = 0;
+        }
+      } else {
+        compileDiagnostics = result.diagnostics ?? [];
       }
-      error = "";
     } catch (err) {
-      error = err as string;
+      if (currentFilePath !== pathSnapshot || content !== text) return;
+      compileDiagnostics = [
+        {
+          message: String(err),
+          file: null,
+          line: null,
+          column: null,
+          hints: [],
+          trace: [],
+        },
+      ];
     }
   }
 
   $effect(() => {
-    const currentContent = content;
+    const text = content;
+    const pathSnapshot = currentFilePath;
     const timeoutId = setTimeout(() => {
-      compile(currentContent);
+      void compile(text, pathSnapshot);
     }, 300);
     return () => clearTimeout(timeoutId);
   });
@@ -263,31 +328,39 @@ $ x^2 + y^2 = r^2 $
   $effect(() => {
     sidebarVisible;
     sidebarWidth;
-    if (!previewVisible) return;
-    tick().then(() => {
-      if (!editorPreviewRegion) return;
-      const rect = editorPreviewRegion.getBoundingClientRect();
-      const max = rect.width - SPLIT_GRIP_PX - PREVIEW_MIN_W;
-      if (max < EDITOR_SPLIT_MIN) return;
-      if (editorWidthPx > max) editorWidthPx = max;
+    previewVisible;
+    tick().then(() => clampEditorSplitToRegion());
+  });
+
+  /** When the editor+preview region resizes, shrink editor so preview keeps min width */
+  $effect(() => {
+    const el = editorPreviewRegion;
+    if (!el) return;
+    const ro = new ResizeObserver(() => {
+      clampEditorSplitToRegion();
     });
+    ro.observe(el);
+    previewVisible;
+    clampEditorSplitToRegion();
+    return () => ro.disconnect();
   });
 
   function handleEditorSplitResize(e: MouseEvent) {
     if (!isResizing || !editorPreviewRegion) return;
     const rect = editorPreviewRegion.getBoundingClientRect();
-    const maxEditor = rect.width - SPLIT_GRIP_PX - PREVIEW_MIN_W;
-    if (maxEditor < EDITOR_SPLIT_MIN) return;
+    const maxEditor = maxEditorPxForRegion(rect.width);
+    if (maxEditor <= 0) return;
+    const lowWanted =
+      maxEditor >= EDITOR_SPLIT_MIN ? EDITOR_SPLIT_MIN : EDITOR_SPLIT_ABS_MIN;
+    const lo = Math.min(lowWanted, maxEditor);
     const x = e.clientX - rect.left;
-    editorWidthPx = Math.round(
-      Math.min(maxEditor, Math.max(EDITOR_SPLIT_MIN, x)),
-    );
+    editorWidthPx = Math.round(Math.min(maxEditor, Math.max(lo, x)));
   }
 
   function handleSidebarResize(e: MouseEvent) {
     if (!isResizingSidebar || !mainLayout) return;
     const { left, width: totalW } = mainLayout.getBoundingClientRect();
-    const editorPreviewMin = 320;
+    const editorPreviewMin = PREVIEW_MIN_W + SPLIT_GRIP_PX + EDITOR_SPLIT_MIN;
     const max = Math.max(
       SIDEBAR_MIN,
       Math.min(SIDEBAR_MAX, totalW - editorPreviewMin),
@@ -392,13 +465,13 @@ $ x^2 + y^2 = r^2 $
               {
                 path: currentFilePath,
                 name,
-                content: DEFAULT_CONTENT,
+                content: defaultNewFileContent(appName),
                 isDirty: false,
                 lastSaved: new Date(),
               },
             ];
           }
-          content = DEFAULT_CONTENT;
+          content = defaultNewFileContent(appName);
           editor?.setValue(content);
         }
         break;
@@ -439,8 +512,19 @@ $ x^2 + y^2 = r^2 $
   }
 
   onMount(() => {
+    void (async () => {
+      try {
+        const n = await fetchAppDisplayName();
+        appName = n;
+        document.title = n;
+      } catch {
+        document.title = appName;
+      }
+    })();
+
     const unlistenMenu = listen("menu-event", (event) => {
       const id = event.payload as string;
+      console.log("[typst-editor:menu] menu-event payload:", id);
       switch (id) {
         case "file-new":
           handleShortcutCommand("file.new");
@@ -471,8 +555,49 @@ $ x^2 + y^2 = r^2 $
           break;
         case "help-shortcuts":
           isShortcutsModalOpen = true;
+          break;
+        default:
+          console.log(
+            "[typst-editor:menu] unhandled menu id (Edit predefined actions like Select All usually bypass this):",
+            id,
+          );
       }
     });
+
+    /** Debug: native Edit → Select All uses OS responder chain, not menu-event. */
+    let selectDebugTimer: ReturnType<typeof setTimeout> | undefined;
+    const logSelectionState = (reason: string) => {
+      const ae = document.activeElement as HTMLElement | null;
+      const domSel = document.getSelection();
+      const inMonaco = ae?.closest?.(".monaco-editor") != null;
+      const ed = editor;
+      let monacoSel: string | undefined;
+      let monacoHasFocus: boolean | undefined;
+      try {
+        if (ed) {
+          const m = ed.getSelection();
+          monacoSel = m
+            ? `L${m.startLineNumber}:C${m.startColumn} → L${m.endLineNumber}:C${m.endColumn}`
+            : "(null)";
+          monacoHasFocus = ed.hasTextFocus();
+        }
+      } catch {
+        monacoSel = "(error reading monaco selection)";
+      }
+      console.log("[typst-editor:select-debug]", reason, {
+        activeElement: ae ? `${ae.tagName}.${ae.className?.toString?.().slice(0, 80) || ""}` : null,
+        inMonaco,
+        monacoHasFocus,
+        monacoSelection: monacoSel,
+        domSelectionLength: domSel?.toString().length ?? 0,
+        domSelectionPreview: (domSel?.toString() ?? "").slice(0, 120),
+      });
+    };
+    const onSelectionChange = () => {
+      if (selectDebugTimer) clearTimeout(selectDebugTimer);
+      selectDebugTimer = setTimeout(() => logSelectionState("selectionchange"), 80);
+    };
+    document.addEventListener("selectionchange", onSelectionChange);
 
     const handleShortcutTrigger = (e: CustomEvent<string>) => {
       handleShortcutCommand(e.detail);
@@ -480,6 +605,8 @@ $ x^2 + y^2 = r^2 $
     window.addEventListener("shortcut-trigger", handleShortcutTrigger as EventListener);
 
     return () => {
+      document.removeEventListener("selectionchange", onSelectionChange);
+      if (selectDebugTimer) clearTimeout(selectDebugTimer);
       unlistenMenu.then((u) => u());
       window.removeEventListener("shortcut-trigger", handleShortcutTrigger as EventListener);
     };
@@ -520,9 +647,12 @@ $ x^2 + y^2 = r^2 $
   isResizingSidebar
     ? 'cursor-col-resize select-none'
     : ''}"
-  style="zoom: {appZoom};"
+  style:zoom={appZoom}
+  style:min-width="{APP_MIN_WIDTH_PX}px"
+  style:min-height="{APP_MIN_HEIGHT_PX}px"
 >
   <Header
+    {appName}
     onShowShortcuts={() => (isShortcutsModalOpen = true)}
     filePath={currentFilePath}
     isDirty={currentFileDirty}
@@ -548,6 +678,7 @@ $ x^2 + y^2 = r^2 $
   >
     {#if isLandingPage}
       <InitialPage
+        {appName}
         onNewFile={() => handleShortcutCommand("file.new")}
         onOpenFile={handleOpenFile}
         onOpenFolder={handleOpenFolder}
@@ -619,14 +750,16 @@ $ x^2 + y^2 = r^2 $
         </div>
 
         <div
-          class="h-full min-w-0 flex flex-col flex-1 overflow-hidden"
+          class="h-full flex flex-col flex-1 overflow-hidden shrink-0"
           style:min-width="{PREVIEW_MIN_W}px"
         >
           <SvgPreview
             {error}
-            {pages}
+            pages={previewPages}
             bind:currentPage
-            {pageCount}
+            pageCount={previewPageCount}
+            diagnostics={compileDiagnostics}
+            stalePreview={showingStalePreview}
             bind:scale
             bind:translateX
             bind:translateY

@@ -5,13 +5,30 @@
     ZoomIn,
     ZoomOut,
     RotateCcw,
+    AlertTriangle,
   } from "lucide-svelte";
+
+  type CompileDiagnostic = {
+    file: string | null;
+    line: number | null;
+    column: number | null;
+    message: string;
+    hints: string[];
+    trace: {
+      message: string;
+      line: number | null;
+      column: number | null;
+      file: string | null;
+    }[];
+  };
 
   let {
     error,
     pages,
     currentPage = $bindable(0),
     pageCount,
+    diagnostics = [],
+    stalePreview = false,
     scale = $bindable(1),
     translateX = $bindable(0),
     translateY = $bindable(0),
@@ -20,6 +37,8 @@
     pages: string[];
     currentPage?: number;
     pageCount: number;
+    diagnostics?: CompileDiagnostic[];
+    stalePreview?: boolean;
     scale?: number;
     translateX?: number;
     translateY?: number;
@@ -30,7 +49,7 @@
   let startY = 0;
 
   function startPan(e: MouseEvent) {
-    if (error) return;
+    if (!pages[currentPage]) return;
     isPanning = true;
     startX = e.clientX - translateX;
     startY = e.clientY - translateY;
@@ -67,6 +86,19 @@
     translateX = 0;
     translateY = 0;
   }
+
+  function formatLocation(d: CompileDiagnostic): string {
+    const parts: string[] = [];
+    if (d.file) parts.push(d.file);
+    if (d.line != null) {
+      parts.push(
+        d.column != null
+          ? `line ${d.line}, column ${d.column}`
+          : `line ${d.line}`,
+      );
+    }
+    return parts.length ? parts.join(" · ") : "";
+  }
 </script>
 
 <svelte:window
@@ -74,26 +106,87 @@
   onmouseup={stopPan}
 />
 
-<div class="h-full relative bg-gray-50 flex flex-col">
+<div class="h-full relative bg-gray-50 flex flex-col min-h-0">
+  {#if error}
+    <div
+      class="shrink-0 px-3 py-2 bg-red-950/90 text-red-200 text-xs border-b border-red-800"
+      role="alert"
+    >
+      {error}
+    </div>
+  {/if}
+
+  {#if stalePreview}
+    <div
+      class="shrink-0 flex items-center gap-2 px-3 py-2 bg-amber-50 text-amber-950 text-xs border-b border-amber-200"
+    >
+      <AlertTriangle size={14} class="shrink-0 text-amber-700" />
+      <span
+        >Showing <strong>last successful</strong> preview — fix errors below to update.</span
+      >
+    </div>
+  {/if}
+
+  {#if diagnostics.length > 0}
+    <div
+      class="shrink-0 max-h-[38vh] min-h-0 overflow-y-auto border-b border-red-200 bg-red-50/95"
+    >
+      <div class="px-3 py-2 text-[10px] font-bold uppercase tracking-wide text-red-800">
+        Compile error{diagnostics.length > 1 ? "s" : ""} ({diagnostics.length})
+      </div>
+      <div class="px-3 pb-3 space-y-4">
+        {#each diagnostics as d, idx (idx)}
+          <div
+            class="rounded-lg border border-red-200 bg-white p-3 shadow-sm text-sm text-gray-900"
+          >
+            {#if formatLocation(d)}
+              <div
+                class="font-mono text-xs font-semibold text-red-800 mb-1.5 tabular-nums"
+              >
+                {formatLocation(d)}
+              </div>
+            {/if}
+            <div class="text-gray-800 leading-snug">{d.message}</div>
+            {#if d.hints?.length}
+              <ul class="mt-2 space-y-1 text-xs text-gray-600 list-disc pl-4">
+                {#each d.hints as hint}
+                  <li>{hint}</li>
+                {/each}
+              </ul>
+            {/if}
+            {#if d.trace?.length}
+              <div class="mt-2 pt-2 border-t border-gray-100 space-y-1">
+                {#each d.trace as t}
+                  <div class="text-xs text-gray-600 pl-2 border-l-2 border-gray-300">
+                    <span class="text-gray-500">↳</span>
+                    {t.message}
+                    {#if t.line != null}
+                      <span class="font-mono text-gray-500">
+                        · line {t.line}{#if t.column != null}, col {t.column}{/if}
+                        {#if t.file}
+                          · {t.file}{/if}
+                      </span>
+                    {/if}
+                  </div>
+                {/each}
+              </div>
+            {/if}
+          </div>
+        {/each}
+      </div>
+    </div>
+  {/if}
+
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div
-    class="flex-1 overflow-hidden relative {isPanning
-      ? 'cursor-grabbing'
-      : 'cursor-grab'}"
+    class="flex-1 min-h-0 overflow-hidden relative {pages[currentPage]
+      ? isPanning
+        ? 'cursor-grabbing'
+        : 'cursor-grab'
+      : 'cursor-default'}"
     onmousedown={startPan}
   >
-    {#if error}
-      <div
-        class="absolute inset-0 p-8 overflow-y-auto bg-white flex justify-center"
-      >
-        <div
-          class="bg-red-50 text-red-700 p-6 rounded-lg border border-red-200 w-full max-w-2xl h-fit shadow-sm"
-        >
-          <pre
-            class="m-0 whitespace-pre-wrap break-all font-mono text-sm">{error}</pre>
-        </div>
-      </div>
-    {:else}
+    {#if pageCount > 0 && pages[currentPage]}
       <div class="absolute bottom-6 right-6 flex flex-col gap-2 z-20">
         <div
           class="flex items-center gap-1 bg-white/90 p-1 rounded-lg shadow-lg border border-gray-200 mb-2"
@@ -148,14 +241,22 @@
       </div>
 
       <div class="w-full h-full flex flex-col items-center overflow-auto p-12">
-        {#if pages[currentPage]}
-          <div
-            style:transform="translate({translateX}px, {translateY}px)
-              scale({scale})"
-            class="bg-white shadow-[0_0_50px_rgba(0,0,0,0.1)] rounded-sm min-w-[300px] transition-transform duration-75 ease-out flex-shrink-0 origin-top"
-          >
-            {@html pages[currentPage]}
-          </div>
+        <div
+          style:transform="translate({translateX}px, {translateY}px)
+            scale({scale})"
+          class="bg-white shadow-[0_0_50px_rgba(0,0,0,0.1)] rounded-sm min-w-[300px] transition-transform duration-75 ease-out flex-shrink-0 origin-top"
+        >
+          {@html pages[currentPage]}
+        </div>
+      </div>
+    {:else}
+      <div
+        class="absolute inset-0 flex items-center justify-center text-gray-400 text-sm p-8 text-center"
+      >
+        {#if diagnostics.length > 0}
+          No preview yet — fix the errors above, or keep editing.
+        {:else}
+          Compile your document to see a preview.
         {/if}
       </div>
     {/if}

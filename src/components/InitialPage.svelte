@@ -2,10 +2,12 @@
   import { FilePlus, FileUp, FolderOpen } from "lucide-svelte";
 
   let {
+    appName,
     onNewFile,
     onOpenFile,
     onOpenFolder,
   } = $props<{
+    appName: string;
     onNewFile: () => void;
     onOpenFile: () => void;
     onOpenFolder: () => void;
@@ -24,7 +26,7 @@
       >
         <span class="text-4xl font-bold">T</span>
       </div>
-      <h1 class="text-3xl font-bold tracking-tight">Typst Editor</h1>
+      <h1 class="text-3xl font-bold tracking-tight">{appName}</h1>
       <p class="text-gray-400">
         The professional way to write and typeset documents.
       </p>

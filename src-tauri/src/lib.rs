@@ -1,11 +1,12 @@
 use tauri::command;
 use tauri::menu::{Menu, Submenu, MenuItem, PredefinedMenuItem};
 use tauri::Emitter;
-use typst::diag::FileError;
+use typst::diag::{FileError, SourceDiagnostic};
 use typst::foundations::{Bytes, Datetime};
-use typst::syntax::{FileId, Source};
+use typst::layout::PagedDocument;
+use typst::syntax::{FileId, Source, Span};
 use typst::text::{Font, FontBook};
-use typst::{Library, LibraryExt, World};
+use typst::{Library, LibraryExt, World, WorldExt};
 use typst::utils::LazyHash;
 use chrono::Datelike;
 
@@ -74,30 +75,122 @@ impl World for SimpleWorld {
 }
 
 #[derive(serde::Serialize)]
-struct CompilationResult {
-    pages: Vec<String>,
-    page_count: usize,
+#[serde(rename_all = "camelCase")]
+struct CompileTraceEntry {
+    message: String,
+    line: Option<u32>,
+    column: Option<u32>,
+    file: Option<String>,
 }
 
-#[command]
-fn compile_typst(content: String) -> Result<CompilationResult, String> {
-    let world = SimpleWorld::new(content);
-    let document: typst::layout::PagedDocument = typst::compile(&world).output.map_err(|errs| {
-        errs.iter()
-            .map(|e| e.message.to_string())
-            .collect::<Vec<_>>()
-            .join("\n")
-    })?;
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CompileDiagnosticJson {
+    file: Option<String>,
+    line: Option<u32>,
+    column: Option<u32>,
+    message: String,
+    hints: Vec<String>,
+    trace: Vec<CompileTraceEntry>,
+}
 
-    let pages: Vec<String> = document
-        .pages
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CompileResponse {
+    success: bool,
+    pages: Vec<String>,
+    page_count: usize,
+    diagnostics: Vec<CompileDiagnosticJson>,
+}
+
+fn span_location(world: &SimpleWorld, span: Span) -> (Option<String>, Option<u32>, Option<u32>) {
+    if span.is_detached() {
+        return (None, None, None);
+    }
+    let Some(fid) = span.id() else {
+        return (None, None, None);
+    };
+    let file = Some(
+        fid.vpath()
+            .as_rootless_path()
+            .display()
+            .to_string(),
+    );
+    let Ok(src) = world.source(fid) else {
+        return (file, None, None);
+    };
+    let Some(range) = world.range(span) else {
+        return (file, None, None);
+    };
+    let Some((line0, col0)) = src.lines().byte_to_line_column(range.start) else {
+        return (file, None, None);
+    };
+    (
+        file,
+        Some(line0 as u32 + 1),
+        Some(col0 as u32 + 1),
+    )
+}
+
+fn diagnostic_to_json(world: &SimpleWorld, d: &SourceDiagnostic) -> CompileDiagnosticJson {
+    let (file, line, column) = span_location(world, d.span);
+    let hints: Vec<String> = d.hints.iter().map(|h| h.to_string()).collect();
+    let trace: Vec<CompileTraceEntry> = d
+        .trace
         .iter()
-        .map(|page| typst_svg::svg(page))
+        .map(|t| {
+            let (f, l, c) = span_location(world, t.span);
+            CompileTraceEntry {
+                message: t.v.to_string(),
+                line: l,
+                column: c,
+                file: f,
+            }
+        })
         .collect();
+    CompileDiagnosticJson {
+        file,
+        line,
+        column,
+        message: d.message.to_string(),
+        hints,
+        trace,
+    }
+}
 
-    let page_count = pages.len();
-
-    Ok(CompilationResult { pages, page_count })
+/// Rich compile result: on failure, `diagnostics` is filled; `pages` stay empty.
+#[command]
+fn compile_typst(content: String) -> CompileResponse {
+    let world = SimpleWorld::new(content);
+    let warned = typst::compile::<PagedDocument>(&world);
+    match warned.output {
+        Ok(document) => {
+            let pages: Vec<String> = document
+                .pages
+                .iter()
+                .map(|page| typst_svg::svg(page))
+                .collect();
+            let page_count = pages.len();
+            CompileResponse {
+                success: true,
+                pages,
+                page_count,
+                diagnostics: vec![],
+            }
+        }
+        Err(errs) => {
+            let diagnostics: Vec<_> = errs
+                .iter()
+                .map(|e| diagnostic_to_json(&world, e))
+                .collect();
+            CompileResponse {
+                success: false,
+                pages: vec![],
+                page_count: 0,
+                diagnostics,
+            }
+        }
+    }
 }
 
 /// Linked Typst compiler version from Cargo.lock (see `build.rs`).
@@ -114,6 +207,7 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .setup(|app| {
             let handle = app.handle();
+            let app_menu_title = handle.package_info().name.clone();
             
             // File Menu
             let new_file = MenuItem::with_id(handle, "file-new", "New File", true, Some("CmdOrCtrl+N"))?;
@@ -189,7 +283,7 @@ pub fn run() {
                     #[cfg(target_os = "macos")]
                     &Submenu::with_items(
                         handle,
-                        "Typst Editor",
+                        &app_menu_title,
                         true,
                         &[
                             &PredefinedMenuItem::about(handle, None, None)?,
@@ -214,6 +308,10 @@ pub fn run() {
 
             app.on_menu_event(move |app_handle, event| {
                 let id = event.id().as_ref();
+                eprintln!(
+                    "[typst-editor:menu] on_menu_event id={:?} (predefined items often use native selectors and may not appear here)",
+                    id
+                );
                 let _ = app_handle.emit("menu-event", id);
             });
 

@@ -24,6 +24,7 @@
   });
 
   let {
+    appName,
     onShowShortcuts,
     filePath = null,
     isDirty = false,
@@ -34,6 +35,7 @@
     onTogglePreview,
     showPanelToggles = true,
   } = $props<{
+    appName: string;
     onShowShortcuts: () => void;
     filePath?: string | null;
     isDirty?: boolean;
@@ -67,7 +69,7 @@
     <div class="w-6 h-6 bg-blue-600 rounded flex items-center justify-center">
       <span class="text-[10px] font-bold">T</span>
     </div>
-    <span class="text-xs font-semibold text-gray-300">Typst Editor</span>
+    <span class="text-xs font-semibold text-gray-300">{appName}</span>
   </div>
 
   <div class="flex-1 flex items-center justify-center">
@@ -126,9 +128,9 @@
     </button>
     <div
       class="text-[10px] text-gray-500 hidden sm:block text-right leading-tight tabular-nums"
-      title="Typst Editor app version and linked Typst compiler"
+      title={`${appName} app version and linked Typst compiler`}
     >
-      <div>Typst Editor v{editorVersion || "…"}</div>
+      <div>{appName} v{editorVersion || "…"}</div>
       <div class="text-gray-600">Typst {typstEngineVersion || "…"}</div>
     </div>
   </div>
