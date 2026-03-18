@@ -857,6 +857,12 @@ fn typst_engine_version() -> String {
     env!("TYPST_ENGINE_VERSION").to_string()
 }
 
+/// When false, the web layer should show an in-app menu (iOS / Android).
+#[command]
+fn app_has_native_menu() -> bool {
+    cfg!(desktop)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     #[allow(unused_mut)] // `mut` only needed when `desktop` enables window-state plugin
@@ -942,6 +948,7 @@ pub fn run() {
             )?;
 
             // Help Menu
+            let help_faq = MenuItem::with_id(handle, "help-faq", "FAQ", true, None::<&str>)?;
             let pkg_cache = MenuItem::with_id(handle, "help-package-cache", "Package Cache…", true, None::<&str>)?;
             let help_fonts = MenuItem::with_id(handle, "help-fonts", "Fonts…", true, None::<&str>)?;
             let shortcuts = MenuItem::with_id(handle, "help-shortcuts", "Keyboard Shortcuts", true, Some("CmdOrCtrl+K CmdOrCtrl+S"))?;
@@ -950,6 +957,7 @@ pub fn run() {
                 "Help",
                 true,
                 &[
+                    &help_faq,
                     &help_fonts,
                     &pkg_cache,
                     &shortcuts,
@@ -1000,6 +1008,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            app_has_native_menu,
             compile_typst,
             export_typst_pdf,
             typst_engine_version,

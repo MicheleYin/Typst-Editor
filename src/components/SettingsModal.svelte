@@ -23,10 +23,10 @@
   } = $props<{
     isOpen: boolean;
     onClose: () => void;
-    initialTab?: "shortcuts" | "packageCache" | "fonts";
+    initialTab?: "shortcuts" | "packageCache" | "fonts" | "faq";
   }>();
 
-  let tab = $state<"shortcuts" | "packageCache" | "fonts">("shortcuts");
+  let tab = $state<"shortcuts" | "packageCache" | "fonts" | "faq">("shortcuts");
 
   $effect(() => {
     if (isOpen) {
@@ -199,7 +199,7 @@
     }
   }
 
-  function selectTab(t: "shortcuts" | "packageCache" | "fonts") {
+  function selectTab(t: "shortcuts" | "packageCache" | "fonts" | "faq") {
     tab = t;
     if (t === "packageCache") void loadCacheInfo();
     if (t === "fonts") void loadFontCfg();
@@ -248,6 +248,15 @@
             >
               Package cache
             </button>
+            <button
+              type="button"
+              class="px-3 py-1 text-xs rounded-md transition-colors {tab === 'faq'
+                ? 'bg-[var(--app-surface-active)] text-[var(--app-active-fg)]'
+                : 'text-[var(--app-fg-secondary)] hover:text-[var(--app-fg)]'}"
+              onclick={() => selectTab("faq")}
+            >
+              FAQ
+            </button>
           </div>
         </div>
         <button
@@ -262,6 +271,104 @@
       <div class="flex-1 overflow-auto p-6 min-h-[280px]">
         {#if tab === "shortcuts"}
           <ShortcutEditor />
+        {:else if tab === "faq"}
+          <div class="space-y-2 text-sm text-[var(--app-fg)]">
+            <p class="text-[var(--app-fg-secondary)] text-xs leading-relaxed mb-4">
+              Quick answers about Typst Editor. Open other tabs in Settings for shortcuts, fonts, and
+              package cache.
+            </p>
+            <details
+              class="group rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)] px-3 py-2 open:pb-3"
+            >
+              <summary
+                class="cursor-pointer list-none font-medium text-[var(--app-fg)] flex items-center justify-between gap-2 [&::-webkit-details-marker]:hidden"
+              >
+                <span>Why doesn&apos;t the preview match my latest edits?</span>
+                <span class="text-[var(--app-fg-muted)] text-xs shrink-0">▼</span>
+              </summary>
+              <p class="mt-2 text-xs text-[var(--app-fg-secondary)] leading-relaxed pl-0.5">
+                The preview updates when Typst compiles successfully. If there are errors, check the
+                sidebar diagnostics. The last successful preview may stay visible until the document
+                compiles again.
+              </p>
+            </details>
+            <details
+              class="group rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)] px-3 py-2 open:pb-3"
+            >
+              <summary
+                class="cursor-pointer list-none font-medium text-[var(--app-fg)] flex items-center justify-between gap-2 [&::-webkit-details-marker]:hidden"
+              >
+                <span>How do I use my own fonts?</span>
+                <span class="text-[var(--app-fg-muted)] text-xs shrink-0">▼</span>
+              </summary>
+              <p class="mt-2 text-xs text-[var(--app-fg-secondary)] leading-relaxed pl-0.5">
+                Open <strong class="text-[var(--app-fg)]">Settings → Fonts</strong>, import font files or
+                a folder, then in your document use
+                <code class="text-[var(--app-link)]">#set text(font: &quot;Family Name&quot;)</code>
+                with the font&apos;s PostScript or display name.
+              </p>
+            </details>
+            <details
+              class="group rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)] px-3 py-2 open:pb-3"
+            >
+              <summary
+                class="cursor-pointer list-none font-medium text-[var(--app-fg)] flex items-center justify-between gap-2 [&::-webkit-details-marker]:hidden"
+              >
+                <span>What are <code class="text-[var(--app-link)] font-normal">@preview/…</code> packages?</span>
+                <span class="text-[var(--app-fg-muted)] text-xs shrink-0">▼</span>
+              </summary>
+              <p class="mt-2 text-xs text-[var(--app-fg-secondary)] leading-relaxed pl-0.5">
+                They come from the Typst package registry. The first time you compile with a package, it
+                is downloaded and cached. See <strong class="text-[var(--app-fg)]">Package cache</strong> for
+                size and location; you can clear the cache if you need to reclaim space.
+              </p>
+            </details>
+            <details
+              class="group rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)] px-3 py-2 open:pb-3"
+            >
+              <summary
+                class="cursor-pointer list-none font-medium text-[var(--app-fg)] flex items-center justify-between gap-2 [&::-webkit-details-marker]:hidden"
+              >
+                <span>How do I export a PDF?</span>
+                <span class="text-[var(--app-fg-muted)] text-xs shrink-0">▼</span>
+              </summary>
+              <p class="mt-2 text-xs text-[var(--app-fg-secondary)] leading-relaxed pl-0.5">
+                With a document open, use the export button in the header or
+                <strong class="text-[var(--app-fg)]">File → Export PDF</strong> (in-app menu on mobile).
+                Choose where to save the file.
+              </p>
+            </details>
+            <details
+              class="group rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)] px-3 py-2 open:pb-3"
+            >
+              <summary
+                class="cursor-pointer list-none font-medium text-[var(--app-fg)] flex items-center justify-between gap-2 [&::-webkit-details-marker]:hidden"
+              >
+                <span>Where are keyboard shortcuts configured?</span>
+                <span class="text-[var(--app-fg-muted)] text-xs shrink-0">▼</span>
+              </summary>
+              <p class="mt-2 text-xs text-[var(--app-fg-secondary)] leading-relaxed pl-0.5">
+                <strong class="text-[var(--app-fg)]">Settings → Shortcuts</strong>. The editor also has
+                Monaco&apos;s command palette (header button) for editor actions.
+              </p>
+            </details>
+            <details
+              class="group rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)] px-3 py-2 open:pb-3"
+            >
+              <summary
+                class="cursor-pointer list-none font-medium text-[var(--app-fg)] flex items-center justify-between gap-2 [&::-webkit-details-marker]:hidden"
+              >
+                <span>What&apos;s the difference between opening a file and a folder?</span>
+                <span class="text-[var(--app-fg-muted)] text-xs shrink-0">▼</span>
+              </summary>
+              <p class="mt-2 text-xs text-[var(--app-fg-secondary)] leading-relaxed pl-0.5">
+                <strong class="text-[var(--app-fg)]">Open file</strong> edits a single <code
+                  class="text-[var(--app-link)]">.typ</code
+                > document. <strong class="text-[var(--app-fg)]">Open folder</strong> is for projects with
+                multiple files, images, or modules that import each other.
+              </p>
+            </details>
+          </div>
         {:else if tab === "fonts"}
           <div class="space-y-4 text-sm text-[var(--app-fg)]">
             <p class="text-[var(--app-fg-secondary)] text-xs leading-relaxed">

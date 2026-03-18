@@ -12,6 +12,8 @@
   } from "lucide-svelte";
   import pkg from "../../package.json";
   import CustomSelect from "./CustomSelect.svelte";
+  import InAppMenu from "./InAppMenu.svelte";
+  import appIcon from "../assets/icon.png";
 
   let editorVersion = $state("");
   let typstEngineVersion = $state("");
@@ -49,8 +51,14 @@
     pdfExporting = false,
     onExportPdf,
     onShowCommandPalette,
+    showInAppMenu = false,
+    onInAppMenuAction,
+    inAppMenuLanding = false,
   } = $props<{
     appName: string;
+    showInAppMenu?: boolean;
+    onInAppMenuAction?: (id: string) => void;
+    inAppMenuLanding?: boolean;
     onShowShortcuts: () => void;
     colorMode?: string;
     onColorModeChange?: (mode: string) => void;
@@ -87,12 +95,17 @@
   class="h-auto py-2 bg-[var(--app-bg)] border-b border-[var(--app-border)] flex items-center px-4 gap-2 z-[80] select-none"
 >
   <div class="flex items-center gap-1 mr-4">
-    <div
-      class="w-6 h-6 rounded flex items-center justify-center shadow-sm"
-      style="background: var(--app-header-badge-bg); color: var(--app-header-badge-fg);"
-    >
-      <span class="text-[10px] font-bold">T</span>
-    </div>
+    {#if showInAppMenu && onInAppMenuAction}
+      <InAppMenu onAction={onInAppMenuAction} landingPage={inAppMenuLanding} />
+    {/if}
+    <img
+      src={appIcon}
+      alt=""
+      width="24"
+      height="24"
+      class="w-6 h-6 rounded object-cover shadow-sm shrink-0"
+      aria-hidden="true"
+    />
     <span class="text-xs font-semibold text-[var(--app-fg-secondary)]">{appName}</span>
   </div>
 

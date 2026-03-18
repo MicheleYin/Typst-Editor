@@ -167,7 +167,7 @@
   let mainLayout: HTMLDivElement | undefined = $state();
   let editorPreviewRegion: HTMLDivElement | undefined = $state();
   let isShortcutsModalOpen = $state(false);
-  let settingsInitialTab = $state<"shortcuts" | "packageCache" | "fonts">("shortcuts");
+  let settingsInitialTab = $state<"shortcuts" | "packageCache" | "fonts" | "faq">("shortcuts");
   let typstFontFaces = $state<TypstFontFace[]>([]);
 
   async function refreshTypstFontFaces() {
@@ -178,7 +178,7 @@
     }
   }
 
-  function openSettings(tab: "shortcuts" | "packageCache" | "fonts" = "shortcuts") {
+  function openSettings(tab: "shortcuts" | "packageCache" | "fonts" | "faq" = "shortcuts") {
     settingsInitialTab = tab;
     isShortcutsModalOpen = true;
   }
@@ -589,6 +589,110 @@
     }
   }
 
+  /** Same actions as Tauri desktop `menu-event` + Edit items for in-app menu (mobile). */
+  function dispatchMenuId(id: string) {
+    console.log("[typst-editor:menu] dispatchMenuId:", id);
+    switch (id) {
+      case "file-new":
+        void handleShortcutCommand("file.new");
+        break;
+      case "file-open":
+        void handleOpenFile();
+        break;
+      case "file-open-folder":
+        void handleOpenFolder();
+        break;
+      case "file-save":
+        void handleSave();
+        break;
+      case "file-save-as":
+        void handleSaveAs();
+        break;
+      case "file-export-pdf":
+        void handleExportPdf();
+        break;
+      case "view-zoom-in":
+        appZoomIn();
+        break;
+      case "view-zoom-out":
+        appZoomOut();
+        break;
+      case "view-reset-zoom":
+        resetAppZoom();
+        break;
+      case "view-toggle-sidebar":
+        sidebarVisible = !sidebarVisible;
+        break;
+      case "help-faq":
+        openSettings("faq");
+        break;
+      case "help-shortcuts":
+        openSettings("shortcuts");
+        break;
+      case "help-package-cache":
+        openSettings("packageCache");
+        break;
+      case "help-fonts":
+        openSettings("fonts");
+        break;
+      case "edit-select-all": {
+        requestAnimationFrame(() => {
+          const ed = monacoMenuRef.current;
+          const ae = document.activeElement as HTMLElement | null;
+          const inMonaco = ae?.closest?.(".monaco-editor") != null;
+          if (inMonaco && ed) {
+            selectAllInMonaco(ed);
+          } else if (ae instanceof HTMLInputElement || ae instanceof HTMLTextAreaElement) {
+            ae.select();
+          } else if (ae?.isContentEditable) {
+            const sel = document.getSelection();
+            const range = document.createRange();
+            range.selectNodeContents(ae);
+            sel?.removeAllRanges();
+            sel?.addRange(range);
+          } else if (ed) {
+            selectAllInMonaco(ed);
+          }
+        });
+        break;
+      }
+      case "edit-undo": {
+        const ed = monacoMenuRef.current;
+        ed?.focus();
+        ed?.trigger("keyboard", "undo", null);
+        break;
+      }
+      case "edit-redo": {
+        const ed = monacoMenuRef.current;
+        ed?.focus();
+        ed?.trigger("keyboard", "redo", null);
+        break;
+      }
+      case "edit-cut": {
+        const ed = monacoMenuRef.current;
+        ed?.focus();
+        ed?.trigger("keyboard", "editor.action.clipboardCutAction", null);
+        break;
+      }
+      case "edit-copy": {
+        const ed = monacoMenuRef.current;
+        ed?.focus();
+        ed?.trigger("keyboard", "editor.action.clipboardCopyAction", null);
+        break;
+      }
+      case "edit-paste": {
+        const ed = monacoMenuRef.current;
+        ed?.focus();
+        ed?.trigger("keyboard", "editor.action.clipboardPasteAction", null);
+        break;
+      }
+      default:
+        console.log("[typst-editor:menu] unhandled menu id:", id);
+    }
+  }
+
+  let showInAppMenu = $state(false);
+
   onMount(() => {
     void refreshTypstFontFaces();
     const mq = window.matchMedia("(prefers-color-scheme: dark)");
@@ -608,74 +712,16 @@
       }
     })();
 
+    void invoke<boolean>("app_has_native_menu")
+      .then((native) => {
+        showInAppMenu = !native;
+      })
+      .catch(() => {
+        /* web dev / older host: keep native assumption (no in-app menu) */
+      });
+
     const unlistenMenu = listen("menu-event", (event) => {
-      const id = event.payload as string;
-      console.log("[typst-editor:menu] menu-event payload:", id);
-      switch (id) {
-        case "file-new":
-          handleShortcutCommand("file.new");
-          break;
-        case "file-open":
-          handleOpenFile();
-          break;
-        case "file-open-folder":
-          handleOpenFolder();
-          break;
-        case "file-save":
-          handleSave();
-          break;
-        case "file-save-as":
-          handleSaveAs();
-          break;
-        case "file-export-pdf":
-          void handleExportPdf();
-          break;
-        case "view-zoom-in":
-          appZoomIn();
-          break;
-        case "view-zoom-out":
-          appZoomOut();
-          break;
-        case "view-reset-zoom":
-          resetAppZoom();
-          break;
-        case "view-toggle-sidebar":
-          sidebarVisible = !sidebarVisible;
-          break;
-        case "help-shortcuts":
-          openSettings("shortcuts");
-          break;
-        case "help-package-cache":
-          openSettings("packageCache");
-          break;
-        case "help-fonts":
-          openSettings("fonts");
-          break;
-        case "edit-select-all": {
-          // Defer: native menu dismiss steals focus; ref must be current (not stale $state).
-          requestAnimationFrame(() => {
-            const ed = monacoMenuRef.current;
-            const ae = document.activeElement as HTMLElement | null;
-            const inMonaco = ae?.closest?.(".monaco-editor") != null;
-            if (inMonaco && ed) {
-              selectAllInMonaco(ed);
-            } else if (ae instanceof HTMLInputElement || ae instanceof HTMLTextAreaElement) {
-              ae.select();
-            } else if (ae?.isContentEditable) {
-              const sel = document.getSelection();
-              const range = document.createRange();
-              range.selectNodeContents(ae);
-              sel?.removeAllRanges();
-              sel?.addRange(range);
-            } else if (ed) {
-              selectAllInMonaco(ed);
-            }
-          });
-          break;
-        }
-        default:
-          console.log("[typst-editor:menu] unhandled menu id:", id);
-      }
+      dispatchMenuId(event.payload as string);
     });
 
     /** Debug: selection logging */
@@ -766,6 +812,9 @@
 >
   <Header
     {appName}
+    {showInAppMenu}
+    onInAppMenuAction={dispatchMenuId}
+    inAppMenuLanding={isLandingPage}
     onShowShortcuts={() => openSettings("shortcuts")}
     colorMode={themePreference}
     onColorModeChange={handleThemePreferenceChange}

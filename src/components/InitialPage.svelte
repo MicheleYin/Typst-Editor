@@ -1,5 +1,6 @@
 <script lang="ts">
   import { FilePlus, FileUp, FolderOpen } from "lucide-svelte";
+  import appIcon from "../assets/icon.png";
 
   let { appName, onNewFile, onOpenFile, onOpenFolder } = $props<{
     appName: string;
@@ -16,11 +17,14 @@
     class="max-w-md w-full text-center space-y-8 animate-in fade-in zoom-in duration-500"
   >
     <div class="flex flex-col items-center space-y-4">
-      <div
-        class="w-20 h-20 bg-blue-600 rounded-2xl flex items-center justify-center shadow-2xl shadow-blue-500/20"
-      >
-        <span class="text-4xl font-bold text-white">T</span>
-      </div>
+      <img
+        src={appIcon}
+        alt=""
+        width="80"
+        height="80"
+        class="w-20 h-20 rounded-2xl object-cover shadow-2xl shadow-black/15 dark:shadow-black/40"
+        aria-hidden="true"
+      />
       <h1 class="text-3xl font-bold tracking-tight">{appName}</h1>
       <p class="text-[var(--app-fg-secondary)]">
         The professional way to write and typeset documents.
