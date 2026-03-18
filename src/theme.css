@@ -1,59 +1,144 @@
 @import "tailwindcss";
 
 @theme {
-  --color-brand-primary: #3b82f6;
-  --color-brand-secondary: #6366f1;
+  --color-brand-primary: #7eb8da;
+  --color-brand-secondary: #b4a7d6;
 
   --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
     Helvetica, Arial, sans-serif;
 
-  --shadow-premium: 0 10px 15px -3px rgba(0, 0, 0, 0.1),
-    0 4px 6px -2px rgba(0, 0, 0, 0.05);
-  --shadow-premium-lg: 0 20px 25px -5px rgba(0, 0, 0, 0.1),
-    0 10px 10px -5px rgba(0, 0, 0, 0.04);
+  --shadow-premium: 0 10px 15px -3px rgba(0, 0, 0, 0.08),
+    0 4px 6px -2px rgba(0, 0, 0, 0.04);
+  --shadow-premium-lg: 0 20px 25px -5px rgba(0, 0, 0, 0.08),
+    0 10px 10px -5px rgba(0, 0, 0, 0.03);
 }
 
-/* Fallbacks until JS applies Catppuccin alt colors from bundled themes */
+/* Pastel app chrome — dark: dusty blue-lavender; light: soft cream & lilac */
 :root {
-  --app-bg: #232634;
-  --app-fg: #c6d0f5;
-  --app-fg-secondary: #a5adce;
-  --app-fg-muted: #737994;
-  --app-fg-subtle: #737994;
-  --app-border: #51576d;
-  --app-border-strong: #626880;
-  --app-surface: #292c3c;
-  --app-surface-elevated: #303446;
-  --app-surface-hover: #414559;
-  --app-surface-active: #51576d;
-  --app-surface-toolbar: #292c3ccc;
-  --app-btn-ghost-hover: #414559;
-  --app-input-bg: #303446;
-  --app-input-fg: #c6d0f5;
-  /* Font menus, dropdown lists — synced from theme dropdown.listBackground */
-  --app-dropdown-list-bg: #737994;
-  --app-chip-bg: #292c3c;
-  --app-chip-divider: #626880;
-  --app-grip: #51576d;
-  --app-grip-hover: #ca9ee6;
-  --app-grip-active: #ca9ee6;
-  --app-card-border: #51576d;
-  --app-icon-muted: #737994;
-  --app-close-hover-fg: #c6d0f5;
-  --preview-pane-bg: #303446;
-  --preview-floating-bg: #292c3c;
-  --preview-floating-border: #51576d;
-  --preview-floating-text: #c6d0f5;
-  --preview-floating-hover: #414559;
-  --preview-empty: #737994;
-  --app-active-fg: #c6d0f5;
-  --app-link: #ca9ee6;
-  --app-header-badge-bg: #ca9ee6;
-  --app-header-badge-fg: #232634;
-  --app-status-edited-dot: #8caaee;
-  --app-status-edited-text: #8caaee;
-  --app-status-edited-glow: rgba(140, 170, 238, 0.45);
-  --app-status-saved-dot: #a6d189;
-  --app-status-saved-text: #a6d189;
-  --app-status-saved-glow: rgba(166, 209, 137, 0.35);
+  --app-bg: #2c3142;
+  --app-fg: #e2e6f4;
+  --app-fg-secondary: #b8bfd4;
+  --app-fg-muted: #949db8;
+  --app-fg-subtle: #8a93ad;
+  --app-border: #4a5168;
+  --app-border-strong: #5c6480;
+  --app-surface: #343a4e;
+  --app-surface-elevated: #3d445a;
+  --app-surface-hover: #454c64;
+  --app-surface-active: #5a6280;
+  --app-surface-toolbar: rgba(52, 58, 78, 0.45);
+  --app-btn-ghost-hover: #454c64;
+  --app-input-bg: #32384c;
+  --app-input-fg: #e2e6f4;
+  --app-chip-bg: #3d445a;
+  --app-chip-divider: #5c6480;
+  --app-grip: #4a5168;
+  --app-card-border: #525a72;
+  --app-icon-muted: #949db8;
+  --app-close-hover-fg: #f0f2fa;
+  --preview-pane-bg: #f4f2f8;
+  --preview-floating-bg: rgba(255, 252, 255, 0.94);
+  --preview-floating-border: #ddd8e8;
+  --preview-floating-text: #4a4d62;
+  --preview-floating-hover: #ebe6f2;
+  --preview-empty: #9ca0b8;
+  --app-active-fg: #f8f7fc;
+  --app-link: #a8c4e8;
+  --app-header-badge-bg: #c4b5e0;
+  --app-header-badge-fg: #2c3142;
+  --app-status-edited-dot: #a8c4e8;
+  --app-status-edited-text: #a8c4e8;
+  --app-status-edited-glow: rgba(168, 196, 232, 0.45);
+  --app-status-saved-dot: #b5e5c8;
+  --app-status-saved-text: #b5e5c8;
+  --app-status-saved-glow: rgba(181, 229, 200, 0.4);
+  --app-grip-hover: #c4b5e0;
+  --app-grip-active: #c4b5e0;
+  --app-dropdown-list-bg: #454c64;
+}
+
+html[data-app-appearance="dark"] {
+  --app-bg: #2c3142;
+  --app-fg: #e2e6f4;
+  --app-fg-secondary: #b8bfd4;
+  --app-fg-muted: #949db8;
+  --app-fg-subtle: #8a93ad;
+  --app-border: #4a5168;
+  --app-border-strong: #5c6480;
+  --app-surface: #343a4e;
+  --app-surface-elevated: #3d445a;
+  --app-surface-hover: #454c64;
+  --app-surface-active: #5a6280;
+  --app-surface-toolbar: rgba(52, 58, 78, 0.45);
+  --app-btn-ghost-hover: #454c64;
+  --app-input-bg: #32384c;
+  --app-input-fg: #e2e6f4;
+  --app-chip-bg: #3d445a;
+  --app-chip-divider: #5c6480;
+  --app-grip: #4a5168;
+  --app-card-border: #525a72;
+  --app-icon-muted: #949db8;
+  --app-close-hover-fg: #f0f2fa;
+  --preview-pane-bg: #ebe8f2;
+  --preview-floating-bg: rgba(255, 252, 255, 0.94);
+  --preview-floating-border: #d4cfe0;
+  --preview-floating-text: #4a4d62;
+  --preview-floating-hover: #e8e4f0;
+  --preview-empty: #9ca0b8;
+  --app-active-fg: #f8f7fc;
+  --app-link: #a8c4e8;
+  --app-header-badge-bg: #c4b5e0;
+  --app-header-badge-fg: #2c3142;
+  --app-status-edited-dot: #a8c4e8;
+  --app-status-edited-text: #a8c4e8;
+  --app-status-edited-glow: rgba(168, 196, 232, 0.45);
+  --app-status-saved-dot: #b5e5c8;
+  --app-status-saved-text: #b5e5c8;
+  --app-status-saved-glow: rgba(181, 229, 200, 0.4);
+  --app-grip-hover: #c4b5e0;
+  --app-grip-active: #c4b5e0;
+  --app-dropdown-list-bg: #4d546c;
+}
+
+html[data-app-appearance="light"] {
+  --app-bg: #ebe6f2;
+  --app-fg: #4d5068;
+  --app-fg-secondary: #6b6e88;
+  --app-fg-muted: #8b8fa8;
+  --app-fg-subtle: #9a9eb5;
+  --app-border: #d4cfe0;
+  --app-border-strong: #c4bed5;
+  --app-surface: #faf8fc;
+  --app-surface-elevated: #f3f0f8;
+  --app-surface-hover: #e8e3f0;
+  --app-surface-active: #ddd6ec;
+  --app-surface-toolbar: rgba(235, 230, 242, 0.85);
+  --app-btn-ghost-hover: #e8e3f0;
+  --app-input-bg: #faf8fc;
+  --app-input-fg: #4d5068;
+  --app-chip-bg: #faf8fc;
+  --app-chip-divider: #d4cfe0;
+  --app-grip: #d4cfe0;
+  --app-card-border: #d4cfe0;
+  --app-icon-muted: #8b8fa8;
+  --app-close-hover-fg: #4d5068;
+  --preview-pane-bg: #f7f5fa;
+  --preview-floating-bg: rgba(255, 255, 255, 0.97);
+  --preview-floating-border: #ddd8e8;
+  --preview-floating-text: #4d5068;
+  --preview-floating-hover: #f0ecf6;
+  --preview-empty: #8b8fa8;
+  --app-active-fg: #4d5068;
+  --app-link: #7b9bd4;
+  --app-header-badge-bg: #b8a8d8;
+  --app-header-badge-fg: #faf8fc;
+  --app-status-edited-dot: #7b9bd4;
+  --app-status-edited-text: #7b9bd4;
+  --app-status-edited-glow: rgba(123, 155, 212, 0.35);
+  --app-status-saved-dot: #7bc4a0;
+  --app-status-saved-text: #5a9d7a;
+  --app-status-saved-glow: rgba(123, 196, 160, 0.35);
+  --app-grip-hover: #b8a8d8;
+  --app-grip-active: #b8a8d8;
+  --app-dropdown-list-bg: #f0ecf8;
 }

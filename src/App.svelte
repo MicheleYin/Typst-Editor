@@ -21,19 +21,14 @@
   } from "./lib/shortcuts";
   import { fetchAppDisplayName, defaultNewFileContent } from "./lib/appMeta";
   import {
-    readStoredColorMode,
-    persistColorMode,
-    COLOR_MODE_OPTIONS,
-    resolveEffectiveLightDark,
-    type ColorMode,
+    readStoredThemePreference,
+    persistThemePreference,
+    THEME_PREFERENCE_OPTIONS,
+    resolveAppearance,
+    resolveMonacoCatThemeId,
+    isValidThemePreference,
+    type ThemePreference,
   } from "./lib/monacoThemes";
-  import {
-    applyAppChromeFromVscodeColors,
-    CAT_LIGHT_COLORS,
-    CAT_DARK_COLORS,
-    MONACO_THEME_ID_LIGHT,
-    MONACO_THEME_ID_DARK,
-  } from "./lib/catppuccinAltThemes";
   import { listTypstFontFaces, type TypstFontFace } from "./lib/typstFonts";
   import pkg from "../package.json";
 
@@ -113,24 +108,21 @@
       ? window.matchMedia("(prefers-color-scheme: dark)").matches
       : true,
   );
-  let colorMode = $state<ColorMode>(readStoredColorMode());
-  let effectiveLightDark = $derived(
-    resolveEffectiveLightDark(colorMode, systemPrefersDark),
+  let themePreference = $state<ThemePreference>(readStoredThemePreference());
+  let resolvedAppearance = $derived(
+    resolveAppearance(themePreference, systemPrefersDark),
   );
-  let monacoThemeResolved = $derived(
-    effectiveLightDark === "dark" ? MONACO_THEME_ID_DARK : MONACO_THEME_ID_LIGHT,
-  );
+  let monacoThemeResolved = $derived(resolveMonacoCatThemeId(resolvedAppearance));
 
-  function handleColorModeChange(id: string) {
-    if (id !== "auto" && id !== "light" && id !== "dark") return;
-    colorMode = id as ColorMode;
-    persistColorMode(colorMode);
+  function handleThemePreferenceChange(id: string) {
+    if (!isValidThemePreference(id)) return;
+    themePreference = id;
+    persistThemePreference(id);
   }
 
   $effect(() => {
-    applyAppChromeFromVscodeColors(
-      effectiveLightDark === "dark" ? CAT_DARK_COLORS : CAT_LIGHT_COLORS,
-    );
+    if (typeof document === "undefined") return;
+    document.documentElement.dataset.appAppearance = resolvedAppearance;
   });
 
   let scale = $state(1);
@@ -727,9 +719,9 @@
   <Header
     {appName}
     onShowShortcuts={() => openSettings("shortcuts")}
-    {colorMode}
-    onColorModeChange={handleColorModeChange}
-    colorModeOptions={COLOR_MODE_OPTIONS}
+    colorMode={themePreference}
+    onColorModeChange={handleThemePreferenceChange}
+    colorModeOptions={THEME_PREFERENCE_OPTIONS}
     filePath={currentFilePath}
     isDirty={currentFileDirty}
     lastSaved={currentFileLastSaved}

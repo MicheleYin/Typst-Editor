@@ -4,6 +4,7 @@
   import { getVersion } from "@tauri-apps/api/app";
   import { Settings, PanelLeft, PanelRight, FileDown, Loader2 } from "lucide-svelte";
   import pkg from "../../package.json";
+  import CustomSelect from "./CustomSelect.svelte";
 
   let editorVersion = $state("");
   let typstEngineVersion = $state("");
@@ -74,7 +75,7 @@
 </script>
 
 <header
-  class="h-10 bg-[var(--app-bg)] border-b border-[var(--app-border)] flex items-center px-4 gap-2 z-50 select-none"
+  class="h-auto py-2 bg-[var(--app-bg)] border-b border-[var(--app-border)] flex items-center px-4 gap-2 z-50 select-none"
 >
   <div class="flex items-center gap-1 mr-4">
     <div
@@ -169,18 +170,15 @@
       </button>
     {/if}
     {#if colorModeOptions.length > 0 && onColorModeChange}
-      <label class="sr-only" for="color-mode-select">Color mode</label>
-      <select
+      <CustomSelect
         id="color-mode-select"
-        class="max-w-32 text-[11px] bg-[var(--app-chip-bg)] border border-[var(--app-border-strong)] text-[var(--app-fg)] rounded px-1.5 py-1 cursor-pointer hover:opacity-90 focus:outline-none focus:ring-1 focus:ring-[var(--app-link)]"
-        title="Light / dark Catppuccin-style theme. Auto follows system."
+        label="Color mode"
+        title="App appearance (header, sidebar, preview chrome). Editor stays Catppuccin alt."
         value={colorMode}
-        onchange={(e) => onColorModeChange(e.currentTarget.value)}
-      >
-        {#each colorModeOptions as opt (opt.id)}
-          <option value={opt.id}>{opt.label}</option>
-        {/each}
-      </select>
+        options={colorModeOptions}
+        onChange={onColorModeChange}
+        align="end"
+      />
     {/if}
     <button
       type="button"

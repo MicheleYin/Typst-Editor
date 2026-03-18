@@ -20,7 +20,7 @@ body,
   height: 100%;
   width: 100%;
   overflow: hidden;
-  background-color: var(--app-bg, #1e1e1e);
-  color: var(--app-fg, #fff);
+  background-color: var(--app-bg, #2c3142);
+  color: var(--app-fg, #e2e6f4);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
 }
