@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { FileText, Folder, ChevronRight, ChevronDown, X } from "lucide-svelte";
+  import { FileText, Folder, ChevronRight, ChevronDown, X, RefreshCw } from "lucide-svelte";
 
   interface SidebarFileItem {
     name: string;
@@ -15,6 +15,7 @@
     folderFiles,
     onSelectFile,
     onCloseFile,
+    onRefreshFolder,
   } = $props<{
     width: number;
     openFiles: { path: string; name: string; isDirty?: boolean; lastSaved?: Date | null }[];
@@ -23,6 +24,7 @@
     folderFiles: SidebarFileItem[];
     onSelectFile: (path: string) => void;
     onCloseFile: (path: string) => void;
+    onRefreshFolder?: () => void | Promise<void>;
   }>();
 
   let explorerOpen = $state(true);
@@ -119,18 +121,35 @@
       ? 'flex-1 overflow-hidden'
       : 'shrink-0'}"
   >
-    <button
-      type="button"
-      onclick={() => (explorerOpen = !explorerOpen)}
-      class="shrink-0 flex items-center gap-1 px-2 py-1.5 bg-[var(--app-surface-toolbar)] hover:bg-[var(--app-surface-hover)] text-[10px] font-bold uppercase tracking-wider text-[var(--app-fg-secondary)] border-b border-[var(--app-border)]"
+    <div
+      class="shrink-0 flex min-w-0 items-stretch border-b border-[var(--app-border)] bg-[var(--app-surface-toolbar)]"
     >
-      {#if explorerOpen}
-        <ChevronDown size={14} />
-      {:else}
-        <ChevronRight size={14} />
+      <button
+        type="button"
+        onclick={() => (explorerOpen = !explorerOpen)}
+        class="flex min-w-0 flex-1 items-center gap-1 px-2 py-1.5 hover:bg-[var(--app-surface-hover)] text-[10px] font-bold uppercase tracking-wider text-[var(--app-fg-secondary)] text-left"
+      >
+        {#if explorerOpen}
+          <ChevronDown size={14} class="shrink-0" />
+        {:else}
+          <ChevronRight size={14} class="shrink-0" />
+        {/if}
+        <span class="truncate">{currentFolder ? currentFolder.split("/").pop() : "No Folder Opened"}</span>
+      </button>
+      {#if currentFolder && onRefreshFolder}
+        <button
+          type="button"
+          title="Refresh file list"
+          onclick={(e) => {
+            e.stopPropagation();
+            void onRefreshFolder();
+          }}
+          class="shrink-0 flex items-center justify-center px-2 hover:bg-[var(--app-surface-hover)] text-[var(--app-fg-secondary)] border-l border-[var(--app-border)]"
+        >
+          <RefreshCw size={14} />
+        </button>
       {/if}
-      {currentFolder ? currentFolder.split("/").pop() : "No Folder Opened"}
-    </button>
+    </div>
 
     {#if explorerOpen}
       <div class="flex min-h-0 flex-1 flex-col overflow-y-auto py-0.5">

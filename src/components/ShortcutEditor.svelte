@@ -19,10 +19,14 @@
   let pendingFirstChord = $state("");
 
   let filteredShortcuts = $derived(
-    $allShortcuts.filter(s => 
-      s.label.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      s.category.toLowerCase().includes(searchQuery.toLowerCase())
-    )
+    $allShortcuts.filter((s) => {
+      const q = searchQuery.toLowerCase();
+      return (
+        s.label.toLowerCase().includes(q) ||
+        s.id.toLowerCase().includes(q) ||
+        s.category.toLowerCase().includes(q)
+      );
+    }),
   );
 
   function startEditing(id: string) {
@@ -140,7 +144,7 @@
     <input
       bind:value={searchQuery}
       type="text"
-      placeholder="Search shortcuts..."
+      placeholder="Search by name, command id, or category…"
       class="w-full bg-[var(--app-input-bg)] border border-[var(--app-border)] rounded px-10 py-2 text-sm text-[var(--app-input-fg)] placeholder:text-[var(--app-fg-muted)] focus:outline-none focus:border-blue-500 transition-colors"
     />
   </div>
@@ -167,8 +171,11 @@
         {#each filteredShortcuts as shortcut}
           <tr class="hover:bg-[var(--app-surface-elevated)] group transition-colors">
             <td class="px-4 py-3">
-              <div class="flex flex-col">
+              <div class="flex flex-col gap-0.5 min-w-0">
                 <span class="text-[var(--app-fg)]">{shortcut.label}</span>
+                <span class="text-[10px] text-[var(--app-fg-muted)] font-mono truncate" title={shortcut.id}
+                  >{shortcut.id}</span
+                >
                 <span class="text-[10px] text-[var(--app-fg-muted)]">{shortcut.category}</span>
               </div>
             </td>

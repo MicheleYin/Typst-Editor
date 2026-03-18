@@ -1,5 +1,6 @@
 import { writable } from 'svelte/store';
 import * as monacoEditor from 'monaco-editor';
+import { CommandsRegistry } from 'monaco-editor/esm/vs/platform/commands/common/commands.js';
 
 export type ShortcutAction = string;
 
@@ -382,8 +383,87 @@ export function ensureAppShortcutMetadataInStore() {
   });
 }
 
+/** Human-readable title for Monaco command ids without an editor action label. */
+export function titleFromMonacoCommandId(id: string): string {
+  const segment = id.includes(':')
+    ? (id.split(':').pop() ?? id)
+    : id.includes('.')
+      ? id.slice(id.lastIndexOf('.') + 1)
+      : id;
+  const spaced = segment
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .replace(/[-_]+/g, ' ')
+    .trim();
+  if (!spaced) return id;
+  return spaced.replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function monacoListCategory(id: string, fromEditorAction: boolean): string {
+  if (fromEditorAction) return 'Monaco';
+  if (id.startsWith('editor.')) return 'Monaco · Editor';
+  if (id.startsWith('workbench.')) return 'Monaco · Workbench';
+  if (id.startsWith('default:')) return 'Monaco · Core';
+  return 'Monaco · Commands';
+}
+
+function shortcutItemForMonacoCommand(
+  id: string,
+  actionLabel: string | undefined,
+  kbService: {
+    lookupKeybinding?: (commandId: string) =>
+      | { getLabel: () => string; _chords?: unknown[] }
+      | undefined;
+  },
+  keybindingLabelByCommand: Map<string, string>,
+): ShortcutItem {
+  let displayKeys = '';
+  let defaultKeybindingInt: number | null = null;
+  try {
+    if (kbService?.lookupKeybinding) {
+      const resolved = kbService.lookupKeybinding(id);
+      displayKeys = resolved?.getLabel?.() ?? '';
+      const chs = resolved?._chords as
+        | Array<{
+            keyCode: number;
+            ctrlKey: boolean;
+            shiftKey: boolean;
+            altKey: boolean;
+            metaKey: boolean;
+          }>
+        | undefined;
+      if (chs?.length && typeof chs[0].keyCode === 'number') {
+        if (chs.length >= 2 && typeof chs[1].keyCode === 'number') {
+          defaultKeybindingInt = encodeMonacoKeyChord(
+            chordToMonacoInt(chs[0]),
+            chordToMonacoInt(chs[1]),
+          );
+        } else {
+          defaultKeybindingInt = chordToMonacoInt(chs[0]);
+        }
+      }
+    }
+    if (!displayKeys) {
+      displayKeys = keybindingLabelByCommand.get(id) ?? '';
+    }
+  } catch (e) {
+    console.warn(`Failed to lookup keybinding for command ${id}:`, e);
+  }
+
+  const label = actionLabel ?? titleFromMonacoCommandId(id);
+  return {
+    id,
+    label,
+    keybindingSource: 'Built-in',
+    displayKeys,
+    category: monacoListCategory(id, !!actionLabel),
+    defaultKeybindingInt,
+  };
+}
+
 export function discoverMonacoActions(editor: any) {
-  const actions = editor.getActions();
+  const actions = editor.getActions() as Array<{ id: string; label: string }>;
+  const actionLabelById = new Map(actions.map((a) => [a.id, a.label]));
+
   const kbService = editor._standaloneKeybindingService as
     | {
         lookupKeybinding?: (id: string) => { getLabel: () => string; _chords?: unknown[] } | undefined;
@@ -394,13 +474,20 @@ export function discoverMonacoActions(editor: any) {
       }
     | undefined;
 
-  const commandToLabel = new Map<string, string>();
+  /** Any chord label from keybinding rules (includes alternate bindings). */
+  const keybindingLabelByCommand = new Map<string, string>();
   if (kbService?.getKeybindings) {
     try {
       for (const item of kbService.getKeybindings()) {
-        if (!item.command || !item.resolvedKeybinding) continue;
-        if (!commandToLabel.has(item.command)) {
-          commandToLabel.set(item.command, item.resolvedKeybinding.getLabel());
+        const cmd = item.command;
+        if (!cmd || cmd.charAt(0) === '-') continue;
+        const rk = item.resolvedKeybinding;
+        if (rk && !keybindingLabelByCommand.has(cmd)) {
+          try {
+            keybindingLabelByCommand.set(cmd, rk.getLabel());
+          } catch {
+            /* ignore */
+          }
         }
       }
     } catch {
@@ -408,48 +495,42 @@ export function discoverMonacoActions(editor: any) {
     }
   }
 
-  const discovered: ShortcutItem[] = actions.map((action: any) => {
-    let displayKeys = '';
-    let defaultKeybindingInt: number | null = null;
+  const commandIds = new Set<string>();
+  for (const a of actions) {
+    commandIds.add(a.id);
+  }
+  if (kbService?.getKeybindings) {
     try {
-      if (kbService?.lookupKeybinding) {
-        const resolved = kbService.lookupKeybinding(action.id);
-        displayKeys = resolved?.getLabel?.() ?? '';
-        const chs = resolved?._chords as
-          | Array<{
-              keyCode: number;
-              ctrlKey: boolean;
-              shiftKey: boolean;
-              altKey: boolean;
-              metaKey: boolean;
-            }>
-          | undefined;
-        if (chs?.length && typeof chs[0].keyCode === 'number') {
-          if (chs.length >= 2 && typeof chs[1].keyCode === 'number') {
-            defaultKeybindingInt = encodeMonacoKeyChord(
-              chordToMonacoInt(chs[0]),
-              chordToMonacoInt(chs[1]),
-            );
-          } else {
-            defaultKeybindingInt = chordToMonacoInt(chs[0]);
-          }
-        }
+      for (const item of kbService.getKeybindings()) {
+        const c = item.command;
+        if (c && c.charAt(0) !== '-') commandIds.add(c);
       }
-      if (!displayKeys) {
-        displayKeys = commandToLabel.get(action.id) ?? '';
-      }
-    } catch (e) {
-      console.warn(`Failed to lookup keybinding for action ${action.id}:`, e);
+    } catch {
+      /* ignore */
     }
+  }
+  try {
+    for (const id of CommandsRegistry.getCommands().keys()) {
+      if (id.startsWith('_') || id === 'noop') continue;
+      commandIds.add(id);
+    }
+  } catch {
+    /* ignore */
+  }
 
-    return {
-      id: action.id,
-      label: action.label,
-      keybindingSource: 'Built-in',
-      displayKeys,
-      category: 'Monaco',
-      defaultKeybindingInt,
-    };
+  const discovered: ShortcutItem[] = [...commandIds].map((id) =>
+    shortcutItemForMonacoCommand(
+      id,
+      actionLabelById.get(id),
+      kbService ?? {},
+      keybindingLabelByCommand,
+    ),
+  );
+
+  discovered.sort((a, b) => {
+    const cat = a.category.localeCompare(b.category);
+    if (cat !== 0) return cat;
+    return a.label.localeCompare(b.label, undefined, { sensitivity: 'base' });
   });
 
   allShortcuts.update((items) => {

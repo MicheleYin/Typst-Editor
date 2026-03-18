@@ -103,6 +103,22 @@
   let splitRatio = $state(readStoredSplitRatio());
   let isResizing = $state(false);
   let editor = $state<monaco.editor.IStandaloneCodeEditor | undefined>(undefined);
+  /**
+   * Tauri `listen("menu-event")` runs in a closure that can read stale `$state` for `editor`.
+   * Keep a plain object ref updated from onReady so Edit → Select All always sees the instance.
+   */
+  const monacoMenuRef: {
+    current: monaco.editor.IStandaloneCodeEditor | undefined;
+  } = { current: undefined };
+
+  function selectAllInMonaco(ed: monaco.editor.IStandaloneCodeEditor) {
+    const model = ed.getModel();
+    if (!model) return;
+    const lastLine = model.getLineCount();
+    const endCol = model.getLineMaxColumn(lastLine);
+    ed.focus();
+    ed.setSelection(new monaco.Selection(1, 1, lastLine, endCol));
+  }
   let systemPrefersDark = $state(
     typeof window !== "undefined"
       ? window.matchMedia("(prefers-color-scheme: dark)").matches
@@ -230,26 +246,39 @@
     }
   }
 
+  async function loadFolderFiles(folderPath: string) {
+    const entries = await readDir(folderPath);
+    folderFiles = entries
+      .filter((e) => !e.name?.startsWith("."))
+      .map((e) => ({
+        name: e.name || "",
+        path: `${folderPath}/${e.name}`,
+        isDirectory: e.isDirectory,
+      }))
+      .sort((a, b) => {
+        if (a.isDirectory === b.isDirectory) return a.name.localeCompare(b.name);
+        return a.isDirectory ? -1 : 1;
+      });
+  }
+
   async function handleOpenFolder() {
     try {
       const selected = await open({ directory: true, multiple: false });
       if (selected) {
         currentFolder = selected;
-        const entries = await readDir(selected);
-        folderFiles = entries
-          .filter((e) => !e.name?.startsWith("."))
-          .map((e) => ({
-            name: e.name || "",
-            path: `${selected}/${e.name}`,
-            isDirectory: e.isDirectory,
-          }))
-          .sort((a, b) => {
-            if (a.isDirectory === b.isDirectory) return a.name.localeCompare(b.name);
-            return a.isDirectory ? -1 : 1;
-          });
+        await loadFolderFiles(selected);
       }
     } catch (err) {
       error = `Error opening folder: ${err}`;
+    }
+  }
+
+  async function handleRefreshFolderExplorer() {
+    if (!currentFolder) return;
+    try {
+      await loadFolderFiles(currentFolder);
+    } catch (err) {
+      error = `Error refreshing folder: ${err}`;
     }
   }
 
@@ -623,23 +652,25 @@
           openSettings("fonts");
           break;
         case "edit-select-all": {
-          const ed = editor;
-          const ae = document.activeElement as HTMLElement | null;
-          const inMonaco = ae?.closest?.(".monaco-editor") != null;
-          if (inMonaco && ed) {
-            ed.getAction("editor.action.selectAll")?.run();
-          } else if (ae instanceof HTMLInputElement || ae instanceof HTMLTextAreaElement) {
-            ae.select();
-          } else if (ae?.isContentEditable) {
-            const sel = document.getSelection();
-            const range = document.createRange();
-            range.selectNodeContents(ae);
-            sel?.removeAllRanges();
-            sel?.addRange(range);
-          } else if (ed) {
-            ed.focus();
-            ed.getAction("editor.action.selectAll")?.run();
-          }
+          // Defer: native menu dismiss steals focus; ref must be current (not stale $state).
+          requestAnimationFrame(() => {
+            const ed = monacoMenuRef.current;
+            const ae = document.activeElement as HTMLElement | null;
+            const inMonaco = ae?.closest?.(".monaco-editor") != null;
+            if (inMonaco && ed) {
+              selectAllInMonaco(ed);
+            } else if (ae instanceof HTMLInputElement || ae instanceof HTMLTextAreaElement) {
+              ae.select();
+            } else if (ae?.isContentEditable) {
+              const sel = document.getSelection();
+              const range = document.createRange();
+              range.selectNodeContents(ae);
+              sel?.removeAllRanges();
+              sel?.addRange(range);
+            } else if (ed) {
+              selectAllInMonaco(ed);
+            }
+          });
           break;
         }
         default:
@@ -791,6 +822,7 @@
         {folderFiles}
         onSelectFile={openFileByPath}
         onCloseFile={handleCloseFile}
+        onRefreshFolder={handleRefreshFolderExplorer}
       />
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div
@@ -829,9 +861,11 @@
             onContentChange={onEditorContentChange}
             onReady={(ed) => {
               editor = ed;
+              monacoMenuRef.current = ed;
             }}
             onDispose={() => {
               editor = undefined;
+              monacoMenuRef.current = undefined;
             }}
           />
         </div>
