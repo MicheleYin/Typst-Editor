@@ -217,7 +217,7 @@
     scale = s;
   }
 
-  /** Zoom in/out toward the center of the preview pane (buttons, ctrl+wheel). */
+  /** Zoom in/out toward the center of the preview pane (toolbar buttons). */
   function setScaleFromViewportCenter(nextScale: number, reason = "viewportCenter") {
     const pane = viewportEl;
     if (!pane) {
@@ -384,7 +384,7 @@
         scaleBefore: scale,
       });
     }
-    setScaleFromViewportCenter(scale * factor, "wheel");
+    setScaleAtFocalPoint(scale * factor, e.clientX, e.clientY, "wheel");
   }
 
   /** Non-passive touch + wheel so pinch/zoom can preventDefault (browser zoom / overscroll). */

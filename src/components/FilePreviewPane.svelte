@@ -139,7 +139,7 @@
     return undefined;
   }
 
-  /** Zoom toward a viewport point (same math as wheel zoom centered on pane). */
+  /** Zoom toward a viewport point (touch pinch midpoint, Ctrl+wheel / trackpad pinch cursor). */
   function setRasterScaleAtFocalPoint(nextScale: number, fx: number, fy: number) {
     const s = Math.min(SCALE_MAX, Math.max(SCALE_MIN, nextScale));
     const prevScale = scale;
@@ -271,7 +271,7 @@
     if (!e.ctrlKey) return;
     e.preventDefault();
     const factor = Math.exp(-e.deltaY * 0.01);
-    setRasterScaleFromViewportCenter(scale * factor);
+    setRasterScaleAtFocalPoint(scale * factor, e.clientX, e.clientY);
   }
 
   /** Non-passive touch + wheel so pinch/zoom can preventDefault (browser zoom / overscroll). */

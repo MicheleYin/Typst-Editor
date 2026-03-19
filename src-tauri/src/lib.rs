@@ -665,6 +665,7 @@ fn compile_typst(app: tauri::AppHandle, content: String, main_path: Option<Strin
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum ExportTypstKind {
     Pdf {
+        #[serde(rename = "pdfProfile", alias = "pdf_profile")]
         pdf_profile: String,
         #[serde(default = "default_export_tagged")]
         tagged: bool,
@@ -2500,6 +2501,34 @@ fn export_desktop_project_zip(project_dir: String, output_path: String) -> Resul
     {
         let _ = (project_dir, output_path);
         Err("Only on desktop.".into())
+    }
+}
+
+#[cfg(test)]
+mod export_typst_kind_tests {
+    use super::ExportTypstKind;
+
+    #[test]
+    fn pdf_deserializes_from_camel_pdf_profile() {
+        let j = r#"{"kind":"pdf","pdfProfile":"1.7","tagged":true}"#;
+        let v: ExportTypstKind = serde_json::from_str(j).unwrap();
+        match v {
+            ExportTypstKind::Pdf { pdf_profile, tagged } => {
+                assert_eq!(pdf_profile, "1.7");
+                assert!(tagged);
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn pdf_deserializes_from_snake_pdf_profile() {
+        let j = r#"{"kind":"pdf","pdf_profile":"1.7","tagged":true}"#;
+        let v: ExportTypstKind = serde_json::from_str(j).unwrap();
+        match v {
+            ExportTypstKind::Pdf { pdf_profile, .. } => assert_eq!(pdf_profile, "1.7"),
+            _ => panic!("wrong variant"),
+        }
     }
 }
 
