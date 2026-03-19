@@ -13,7 +13,27 @@ use tauri::Manager;
 // Native app menus are desktop-only in Tauri (`cfg(desktop)`). iOS/iPadOS builds omit
 // `set_menu` / `on_menu_event`; use web shortcuts + in-app UI on iPad for the same actions.
 #[cfg(desktop)]
+use std::sync::OnceLock;
+#[cfg(desktop)]
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
+#[cfg(desktop)]
+use tauri::Wry;
+
+/// Handle for **File → Export…** so the web layer can enable/disable it when the active tab changes.
+#[cfg(desktop)]
+static EXPORT_TYPST_MENU_ITEM: OnceLock<MenuItem<Wry>> = OnceLock::new();
+
+/// **File → New / Save / Save As** and **View → Toggle Sidebar**: enabled only when a project folder is open.
+#[cfg(desktop)]
+struct WorkspaceDependentMenuItems {
+    new_file: MenuItem<Wry>,
+    save: MenuItem<Wry>,
+    save_as: MenuItem<Wry>,
+    toggle_sidebar: MenuItem<Wry>,
+}
+
+#[cfg(desktop)]
+static WORKSPACE_DEPENDENT_MENU_ITEMS: OnceLock<WorkspaceDependentMenuItems> = OnceLock::new();
 use typst::diag::{FileError, FileResult, Severity, SourceDiagnostic};
 use typst::foundations::{Bytes, Datetime, Smart};
 use typst::layout::PagedDocument;
@@ -2244,6 +2264,41 @@ fn desktop_project_touch_updated_meta(project_path: String) -> Result<(), String
     }
 }
 
+/// Sync native menus that require an open project folder (desktop only).
+#[command]
+fn set_workspace_dependent_menus_enabled(enabled: bool) -> Result<(), String> {
+    #[cfg(desktop)]
+    {
+        if let Some(h) = WORKSPACE_DEPENDENT_MENU_ITEMS.get() {
+            h.new_file
+                .set_enabled(enabled)
+                .map_err(|e| e.to_string())?;
+            h.save.set_enabled(enabled).map_err(|e| e.to_string())?;
+            h.save_as.set_enabled(enabled).map_err(|e| e.to_string())?;
+            h.toggle_sidebar
+                .set_enabled(enabled)
+                .map_err(|e| e.to_string())?;
+        }
+    }
+    #[cfg(not(desktop))]
+    let _ = enabled;
+    Ok(())
+}
+
+/// Sync native **File → Export…** with whether the current editor tab is a `.typ` source (desktop only).
+#[command]
+fn set_export_typst_menu_enabled(enabled: bool) -> Result<(), String> {
+    #[cfg(desktop)]
+    {
+        if let Some(item) = EXPORT_TYPST_MENU_ITEM.get() {
+            item.set_enabled(enabled).map_err(|e| e.to_string())?;
+        }
+    }
+    #[cfg(not(desktop))]
+    let _ = enabled;
+    Ok(())
+}
+
 #[command]
 fn export_desktop_project_zip(project_dir: String, output_path: String) -> Result<(), String> {
     #[cfg(desktop)]
@@ -2288,7 +2343,8 @@ pub fn run() {
             // File Menu (project-based app)
             let all_projects =
                 MenuItem::with_id(handle, "ios-back-projects", "All Projects", true, None::<&str>)?;
-            let new_file = MenuItem::with_id(handle, "file-new", "New File", true, Some("CmdOrCtrl+N"))?;
+            // New / Save / Save As: start disabled until the frontend reports an open project folder.
+            let new_file = MenuItem::with_id(handle, "file-new", "New File", false, Some("CmdOrCtrl+N"))?;
             let open_project_folder = MenuItem::with_id(
                 handle,
                 "desktop-open-project-folder",
@@ -2296,9 +2352,17 @@ pub fn run() {
                 true,
                 None::<&str>,
             )?;
-            let save_file = MenuItem::with_id(handle, "file-save", "Save", true, Some("CmdOrCtrl+S"))?;
-            let save_as = MenuItem::with_id(handle, "file-save-as", "Save As...", true, Some("CmdOrCtrl+Shift+S"))?;
-            let export_typst = MenuItem::with_id(handle, "file-export-typst", "Export…", true, Some("CmdOrCtrl+Shift+E"))?;
+            let save_file = MenuItem::with_id(handle, "file-save", "Save", false, Some("CmdOrCtrl+S"))?;
+            let save_as = MenuItem::with_id(handle, "file-save-as", "Save As...", false, Some("CmdOrCtrl+Shift+S"))?;
+            // Start disabled until the frontend reports a `.typ` tab (`set_export_typst_menu_enabled`).
+            let export_typst = MenuItem::with_id(
+                handle,
+                "file-export-typst",
+                "Export…",
+                false,
+                Some("CmdOrCtrl+Shift+E"),
+            )?;
+            let _ = EXPORT_TYPST_MENU_ITEM.set(export_typst.clone());
 
             let file_menu = Submenu::with_items(
                 handle,
@@ -2339,7 +2403,15 @@ pub fn run() {
             let zoom_in = MenuItem::with_id(handle, "view-zoom-in", "Zoom In", true, Some("CmdOrCtrl+="))?;
             let zoom_out = MenuItem::with_id(handle, "view-zoom-out", "Zoom Out", true, Some("CmdOrCtrl+-"))?;
             let reset_zoom = MenuItem::with_id(handle, "view-reset-zoom", "Reset Zoom", true, Some("CmdOrCtrl+0"))?;
-            let toggle_sidebar = MenuItem::with_id(handle, "view-toggle-sidebar", "Toggle Sidebar", true, Some("CmdOrCtrl+B"))?;
+            let toggle_sidebar =
+                MenuItem::with_id(handle, "view-toggle-sidebar", "Toggle Sidebar", false, Some("CmdOrCtrl+B"))?;
+
+            let _ = WORKSPACE_DEPENDENT_MENU_ITEMS.set(WorkspaceDependentMenuItems {
+                new_file: new_file.clone(),
+                save: save_file.clone(),
+                save_as: save_as.clone(),
+                toggle_sidebar: toggle_sidebar.clone(),
+            });
 
             let view_menu = Submenu::with_items(
                 handle,
@@ -2449,6 +2521,8 @@ pub fn run() {
             desktop_update_project_meta_title,
             desktop_project_touch_updated_meta,
             export_desktop_project_zip,
+            set_export_typst_menu_enabled,
+            set_workspace_dependent_menus_enabled,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

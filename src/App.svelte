@@ -121,6 +121,8 @@
   let iosProjectFolderId = $state<string | null>(null);
   let iosProjectTitle = $state("");
   let isProjectHub = $derived(!iosProjectPath);
+  /** Native menus: New / Save / Save As / Toggle Sidebar only when a project folder is open. */
+  let workspaceNativeMenusEnabled = $derived(!isProjectHub);
 
   let content = $state("");
   let pages = $state<string[]>([]);
@@ -495,6 +497,22 @@
       !!currentFilePath &&
       isTypstPath(currentFilePath),
   );
+
+  /** Grey out native File → Export… on macOS/Windows when not on a `.typ` tab. */
+  $effect(() => {
+    const enabled = exportTypstAllowed;
+    void invoke("set_export_typst_menu_enabled", { enabled }).catch(() => {
+      /* web dev / mobile: command missing or N/A */
+    });
+  });
+
+  /** Grey out New / Save / Save As / Toggle Sidebar when no project is open. */
+  $effect(() => {
+    const enabled = workspaceNativeMenusEnabled;
+    void invoke("set_workspace_dependent_menus_enabled", { enabled }).catch(() => {
+      /* web dev / mobile */
+    });
+  });
   /** Raster / PDF: full-width preview only (no Monaco). */
   let isPreviewOnlyMedia = $derived(
     !!currentTab?.isBinary &&
