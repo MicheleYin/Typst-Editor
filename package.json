@@ -18,6 +18,7 @@
     "fonts:download": "node scripts/download-bundled-fonts.mjs"
   },
   "dependencies": {
+    "@embedpdf/svelte-pdf-viewer": "^2.9.1",
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-dialog": "^2.6.0",
     "@tauri-apps/plugin-fs": "^2.4.5",

@@ -1,5 +1,13 @@
 @import "./theme.css";
 
+/* EmbedPDF viewer: primary accent (matches Vite-style blue-violet). */
+:root {
+  --embed-pdf-accent: #747bff;
+  --embed-pdf-accent-hover: #9095ff;
+  --embed-pdf-accent-active: #5c63ef;
+  --embed-pdf-accent-light: rgba(116, 123, 255, 0.22);
+}
+
 .logo.vite:hover {
   filter: drop-shadow(0 0 2em #747bff);
 }

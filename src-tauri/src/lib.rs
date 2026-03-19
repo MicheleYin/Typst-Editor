@@ -2202,6 +2202,26 @@ fn desktop_fs_write_text_file(path: String, contents: String) -> Result<(), Stri
     }
 }
 
+#[command]
+fn desktop_fs_write_binary_file(path: String, contents: Vec<u8>) -> Result<(), String> {
+    #[cfg(desktop)]
+    {
+        if path.contains('\0') {
+            return Err("Invalid path.".into());
+        }
+        let pb = PathBuf::from(path.trim());
+        if let Some(parent) = pb.parent() {
+            fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        fs::write(&pb, contents).map_err(|e| e.to_string())
+    }
+    #[cfg(not(desktop))]
+    {
+        let _ = (path, contents);
+        Err("Only on desktop.".into())
+    }
+}
+
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct DesktopFsDirEntry {
@@ -2731,6 +2751,7 @@ pub fn run() {
             desktop_recent_project_remove,
             desktop_fs_read_text_file,
             desktop_fs_write_text_file,
+            desktop_fs_write_binary_file,
             desktop_fs_read_dir,
             desktop_fs_remove,
             desktop_fs_rename,

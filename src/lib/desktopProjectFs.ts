@@ -68,6 +68,16 @@ export async function desktopWriteTextFile(
   await invoke("desktop_fs_write_text_file", { path, contents });
 }
 
+export async function desktopWriteBinaryFile(
+  path: string,
+  contents: Uint8Array,
+): Promise<void> {
+  await invoke("desktop_fs_write_binary_file", {
+    path,
+    contents: Array.from(contents),
+  });
+}
+
 export async function desktopReadDir(
   path: string,
 ): Promise<{ name: string; isDirectory: boolean }[]> {

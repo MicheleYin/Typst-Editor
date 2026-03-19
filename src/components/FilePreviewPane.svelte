@@ -1,5 +1,8 @@
 <script lang="ts">
   import { ZoomIn, ZoomOut, RotateCcw } from "lucide-svelte";
+  import type { AppAppearance } from "../lib/monacoThemes";
+  import type { EmbedPdfDiskSaveApi } from "../lib/embedPdfAppChrome";
+  import EmbedPdfPane from "./EmbedPdfPane.svelte";
   import SvgPreview from "./SvgPreview.svelte";
 
   type CompileDiagnostic = {
@@ -36,12 +39,19 @@
 
   let {
     mode,
+    appAppearance = "dark",
+    onPdfDirty,
+    onPdfDiskApiReady,
     currentPage = $bindable(0),
     scale = $bindable(1),
     translateX = $bindable(0),
     translateY = $bindable(0),
   } = $props<{
     mode: PreviewMode;
+    /** Used by the PDF viewer (EmbedPDF) to match app light/dark. */
+    appAppearance?: AppAppearance;
+    onPdfDirty?: () => void;
+    onPdfDiskApiReady?: (api: EmbedPdfDiskSaveApi | null) => void;
     currentPage?: number;
     scale?: number;
     translateX?: number;
@@ -436,18 +446,20 @@
   <div
     class="h-full w-full min-h-0 flex flex-col bg-[var(--app-surface)] overflow-hidden"
     role="region"
-    aria-label="PDF preview"
+    aria-label="PDF preview with annotations"
   >
     <div
-      class="shrink-0 px-2 py-1.5 text-[10px] uppercase tracking-wider text-[var(--app-fg-muted)] border-b border-[var(--app-border)]"
+      class="shrink-0 border-b border-[var(--app-border)] px-2 py-1.5 text-[10px] uppercase tracking-wider text-[var(--app-fg-muted)]"
+      title="Annotate in the viewer; use Save (⌘S / Ctrl+S) to write changes to this file in the project."
     >
-      PDF
+      PDF · annotate &amp; save
     </div>
-    <iframe
-      title="PDF preview"
+    <EmbedPdfPane
       src={mode.url}
-      class="flex-1 min-h-0 w-full border-0 bg-[var(--app-bg)]"
-    ></iframe>
+      appearance={appAppearance}
+      onPdfDirty={onPdfDirty}
+      onDiskApiReady={onPdfDiskApiReady}
+    />
   </div>
 {:else if mode.kind === "markdown"}
   <div

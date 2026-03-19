@@ -40,6 +40,7 @@
     createAssetPreviewUrl,
     revokeAssetPreviewUrl,
   } from "./lib/assetPreviewUrl";
+  import type { EmbedPdfDiskSaveApi } from "./lib/embedPdfAppChrome";
   import EditorQuickActions from "./components/EditorQuickActions.svelte";
   import {
     syncAppShortcuts,
@@ -82,6 +83,7 @@
   import {
     desktopReadTextFile,
     desktopWriteTextFile,
+    desktopWriteBinaryFile,
     desktopReadDir,
     desktopRecentRemove,
     desktopRecentProjectsList,
@@ -115,6 +117,8 @@
     assetKind?: "image" | "pdf";
   };
   let openFiles = $state<OpenEditorTab[]>([]);
+  /** EmbedPDF export handle while a PDF tab’s viewer is mounted. */
+  let pdfDiskSaveApi = $state<EmbedPdfDiskSaveApi | null>(null);
 
   function revokeBlobUrlsInTabs(tabs: OpenEditorTab[]) {
     for (const t of tabs) revokeAssetPreviewUrl(t.assetUrl);
@@ -182,6 +186,42 @@
       }
     }
     await writeTextFile(absPath, data);
+  }
+
+  async function writeBinaryFileAtPath(absPath: string, data: Uint8Array): Promise<void> {
+    if (!projectsUseDocumentDir) {
+      await desktopWriteBinaryFile(absPath, data);
+      return;
+    }
+    const root = await invoke<string | null>("workspace_documents_dir");
+    if (root) {
+      const normRoot = root.replace(/\/$/, "");
+      const normPath = absPath.replace(/\/$/, "");
+      if (normPath === normRoot || normPath.startsWith(`${normRoot}/`)) {
+        const rel =
+          normPath === normRoot ? "" : normPath.slice(normRoot.length + 1);
+        if (rel && !rel.startsWith("..") && !rel.includes("/../")) {
+          const useDoc = await invoke<boolean>("workspace_projects_use_document_dir");
+          await writeFile(rel, data, {
+            baseDir: useDoc ? BaseDirectory.Document : BaseDirectory.AppLocalData,
+          });
+          return;
+        }
+      }
+    }
+    await writeFile(absPath, data);
+  }
+
+  function markCurrentPdfDirty() {
+    const path = currentFilePath;
+    if (!path) return;
+    openFiles = openFiles.map((f) =>
+      f.path === path && f.assetKind === "pdf" ? { ...f, isDirty: true } : f,
+    );
+  }
+
+  function handlePdfDiskApiReady(api: EmbedPdfDiskSaveApi | null) {
+    pdfDiskSaveApi = api;
   }
 
   /** Persist the active editor to disk (iOS project mode) before switching files or leaving. */
@@ -1163,7 +1203,30 @@
   }
 
   async function handleSave() {
-    if (currentFilePath && openFiles.find((f) => f.path === currentFilePath)?.isBinary) {
+    const tab = currentFilePath
+      ? openFiles.find((f) => f.path === currentFilePath)
+      : undefined;
+    if (tab?.isBinary && tab.assetKind === "pdf" && currentFilePath) {
+      if (!pdfDiskSaveApi) {
+        error = "PDF viewer is still loading. Try Save again in a moment.";
+        return;
+      }
+      try {
+        const buf = await pdfDiskSaveApi.saveToBuffer();
+        await writeBinaryFileAtPath(currentFilePath, new Uint8Array(buf));
+        openFiles = openFiles.map((f) =>
+          f.path === currentFilePath
+            ? { ...f, isDirty: false, lastSaved: new Date() }
+            : f,
+        );
+        error = "";
+        touchProjectMetaUpdated();
+      } catch (err) {
+        error = `Error saving PDF: ${err}`;
+      }
+      return;
+    }
+    if (tab?.isBinary) {
       return;
     }
     if (currentFilePath) {
@@ -1187,6 +1250,50 @@
 
   async function handleSaveAs() {
     try {
+      const tab = currentFilePath
+        ? openFiles.find((f) => f.path === currentFilePath)
+        : undefined;
+      if (tab?.assetKind === "pdf") {
+        if (!pdfDiskSaveApi) {
+          await message("PDF viewer is still loading. Try again in a moment.", {
+            title: "Save As",
+            kind: "info",
+          });
+          return;
+        }
+        const defaultName = tab.name.toLowerCase().endsWith(".pdf")
+          ? tab.name
+          : `${tab.name.replace(/\.[^/.]+$/, "") || "document"}.pdf`;
+        const selected = await save({
+          defaultPath: defaultName,
+          filters: [{ name: "PDF", extensions: ["pdf"] }],
+        });
+        if (!selected) return;
+        const buf = await pdfDiskSaveApi.saveToBuffer();
+        await writeFile(selected, new Uint8Array(buf));
+        const name = selected.split(/[/\\]/).pop() || selected;
+        revokeAssetPreviewUrl(tab.assetUrl);
+        const preview = await createAssetPreviewUrl(selected, projectsUseDocumentDir);
+        const assetUrl = preview?.url;
+        currentFilePath = selected;
+        openFiles = openFiles.map((f) =>
+          f.path === tab.path
+            ? {
+                ...f,
+                path: selected,
+                name,
+                assetUrl,
+                isDirty: false,
+                lastSaved: new Date(),
+              }
+            : f,
+        );
+        error = "";
+        touchProjectMetaUpdated();
+        if (currentFolder) void loadFolderFiles(currentFolder);
+        return;
+      }
+
       const mobile = await openMobileSaveAsModal("saveAs");
       if (mobile) return;
       const selected = await save({
@@ -2182,6 +2289,9 @@
         <div class="h-full flex flex-col min-w-0 min-h-0 flex-1 overflow-hidden">
           <FilePreviewPane
             mode={filePreviewMode}
+            appAppearance={resolvedAppearance}
+            onPdfDirty={markCurrentPdfDirty}
+            onPdfDiskApiReady={handlePdfDiskApiReady}
             bind:currentPage
             bind:scale
             bind:translateX
@@ -2243,6 +2353,9 @@
           <div class="h-full flex flex-col min-w-0 min-h-0 overflow-hidden">
             <FilePreviewPane
               mode={filePreviewMode}
+              appAppearance={resolvedAppearance}
+              onPdfDirty={markCurrentPdfDirty}
+              onPdfDiskApiReady={handlePdfDiskApiReady}
               bind:currentPage
               bind:scale
               bind:translateX
