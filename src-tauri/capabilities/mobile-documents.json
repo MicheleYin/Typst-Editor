@@ -19,6 +19,10 @@
       ]
     },
     {
+      "identifier": "fs:allow-read-file",
+      "allow": ["$DOCUMENT/**"]
+    },
+    {
       "identifier": "fs:allow-write-text-file",
       "allow": [
         "$DOCUMENT/**",

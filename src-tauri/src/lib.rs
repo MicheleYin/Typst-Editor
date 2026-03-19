@@ -1738,6 +1738,27 @@ fn desktop_fs_remove(path: String, recursive: bool) -> Result<(), String> {
 }
 
 #[command]
+fn desktop_fs_rename(from: String, to: String) -> Result<(), String> {
+    #[cfg(desktop)]
+    {
+        if from.contains('\0') || to.contains('\0') {
+            return Err("Invalid path.".into());
+        }
+        let a = PathBuf::from(from.trim());
+        let b = PathBuf::from(to.trim());
+        if let Some(parent) = b.parent() {
+            fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        fs::rename(&a, &b).map_err(|e| e.to_string())
+    }
+    #[cfg(not(desktop))]
+    {
+        let _ = (from, to);
+        Err("Only on desktop.".into())
+    }
+}
+
+#[command]
 fn desktop_fs_copy_file(from: String, to: String) -> Result<(), String> {
     #[cfg(desktop)]
     {
@@ -2107,6 +2128,7 @@ pub fn run() {
             desktop_fs_write_text_file,
             desktop_fs_read_dir,
             desktop_fs_remove,
+            desktop_fs_rename,
             desktop_fs_copy_file,
             desktop_create_project,
             desktop_update_project_meta_title,

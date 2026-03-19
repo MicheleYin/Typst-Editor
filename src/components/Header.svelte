@@ -47,6 +47,8 @@
     onToggleSidebar,
     previewVisible = true,
     onTogglePreview,
+    /** When true, hide the preview panel toggle (e.g. image/PDF full-width preview). */
+    suppressPreviewToggle = false,
     showPanelToggles = true,
     showExportPdf = false,
     pdfExporting = false,
@@ -83,6 +85,7 @@
     onToggleSidebar: () => void;
     previewVisible?: boolean;
     onTogglePreview: () => void;
+    suppressPreviewToggle?: boolean;
     showPanelToggles?: boolean;
     showExportPdf?: boolean;
     pdfExporting?: boolean;
@@ -201,17 +204,19 @@
       >
         <PanelLeft size={18} />
       </button>
-      <button
-        type="button"
-        onclick={onTogglePreview}
-        class="p-1.5 rounded transition-colors {previewVisible
-          ? 'text-[var(--app-link)] bg-[var(--app-chip-bg)] hover:bg-[var(--app-btn-ghost-hover)]'
-          : 'text-[var(--app-icon-muted)] hover:bg-[var(--app-btn-ghost-hover)] hover:text-[var(--app-fg)]'}"
-        title={previewVisible ? "Hide preview" : "Show preview"}
-        aria-pressed={previewVisible}
-      >
-        <PanelRight size={18} />
-      </button>
+      {#if !suppressPreviewToggle}
+        <button
+          type="button"
+          onclick={onTogglePreview}
+          class="p-1.5 rounded transition-colors {previewVisible
+            ? 'text-[var(--app-link)] bg-[var(--app-chip-bg)] hover:bg-[var(--app-btn-ghost-hover)]'
+            : 'text-[var(--app-icon-muted)] hover:bg-[var(--app-btn-ghost-hover)] hover:text-[var(--app-fg)]'}"
+          title={previewVisible ? "Hide preview" : "Show preview"}
+          aria-pressed={previewVisible}
+        >
+          <PanelRight size={18} />
+        </button>
+      {/if}
     {/if}
     {#if onShowCommandPalette}
       <button

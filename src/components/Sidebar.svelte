@@ -8,12 +8,16 @@
     RefreshCw,
     
   } from "lucide-svelte";
+  import type { FolderExplorerNode } from "../lib/folderExplorerTree";
 
-  interface SidebarFileItem {
+  type ExplorerRow = {
     name: string;
     path: string;
     isDirectory: boolean;
-  }
+    depth: number;
+    /** False for empty dirs — no chevron / toggle. */
+    expandable: boolean;
+  };
 
   let {
     width,
@@ -24,22 +28,100 @@
     onSelectFile,
     onCloseFile,
     onRefreshFolder,
+    onExplorerRenameFile,
+    onExplorerDeleteFile,
     
   } = $props<{
     width: number;
     openFiles: { path: string; name: string; isDirty?: boolean; lastSaved?: Date | null }[];
     activeFile: string | null;
     currentFolder: string | null;
-    folderFiles: SidebarFileItem[];
+    folderFiles: FolderExplorerNode[];
     onSelectFile: (path: string) => void;
     onCloseFile: (path: string) => void;
     onRefreshFolder?: () => void | Promise<void>;
+    onExplorerRenameFile?: (path: string) => void;
+    onExplorerDeleteFile?: (path: string) => void | Promise<void>;
     iosProjectTitle?: string | null;
     onIosBackToProjects?: () => void;
   }>();
 
   let explorerOpen = $state(true);
   let openEditorsOpen = $state(true);
+
+  /** `true` = folder row is collapsed (children hidden). */
+  let collapsedByPath = $state<Record<string, boolean>>({});
+
+  $effect(() => {
+    void currentFolder;
+    collapsedByPath = {};
+  });
+
+  function walkVisible(
+    nodes: FolderExplorerNode[],
+    collapsed: Record<string, boolean>,
+    depth: number,
+  ): ExplorerRow[] {
+    const rows: ExplorerRow[] = [];
+    for (const n of nodes) {
+      const expandable = n.isDirectory && (n.children?.length ?? 0) > 0;
+      rows.push({
+        name: n.name,
+        path: n.path,
+        isDirectory: n.isDirectory,
+        depth,
+        expandable,
+      });
+      if (expandable && collapsed[n.path] !== true) {
+        rows.push(...walkVisible(n.children!, collapsed, depth + 1));
+      }
+    }
+    return rows;
+  }
+
+  let explorerRows = $derived.by(() =>
+    walkVisible(folderFiles, collapsedByPath, 0),
+  );
+
+  let explorerFileMenu = $state<{
+    x: number;
+    y: number;
+    path: string;
+  } | null>(null);
+
+  function closeExplorerFileMenu() {
+    explorerFileMenu = null;
+  }
+
+  function openExplorerFileMenu(
+    e: MouseEvent,
+    path: string,
+  ) {
+    e.preventDefault();
+    e.stopPropagation();
+    const pad = 8;
+    const mw = 200;
+    const mh = 88;
+    let x = e.clientX;
+    let y = e.clientY;
+    if (typeof window !== "undefined") {
+      x = Math.min(x, window.innerWidth - mw - pad);
+      y = Math.min(y, window.innerHeight - mh - pad);
+      x = Math.max(pad, x);
+      y = Math.max(pad, y);
+    }
+    explorerFileMenu = { x, y, path };
+  }
+
+  function toggleExplorerDir(path: string) {
+    const next = { ...collapsedByPath };
+    if (next[path]) {
+      delete next[path];
+    } else {
+      next[path] = true;
+    }
+    collapsedByPath = next;
+  }
 
   function formatRelativeTime(date: Date | null | undefined) {
     if (!date) return "";
@@ -173,24 +255,101 @@
             </p>
           </div>
         {:else}
-          {#each folderFiles as item}
+          {#each explorerRows as item}
             <button
               type="button"
-              class="flex w-full items-center gap-2 px-4 py-0.5 text-xs hover:bg-[var(--app-surface-hover)] cursor-pointer {activeFile === item.path
+              class="flex w-full items-center gap-1.5 py-0.5 pr-4 text-xs hover:bg-[var(--app-surface-hover)] cursor-pointer {activeFile === item.path
                 ? 'bg-[var(--app-surface-active)] text-[var(--app-active-fg)]'
                 : 'text-[var(--app-fg-secondary)]'}"
-              onclick={() => onSelectFile(item.path)}
+              style:padding-left="{10 + item.depth * 14}px"
+              oncontextmenu={(e) => {
+                if (
+                  item.isDirectory ||
+                  !onExplorerRenameFile ||
+                  !onExplorerDeleteFile
+                ) {
+                  return;
+                }
+                openExplorerFileMenu(e, item.path);
+              }}
+              onclick={() => {
+                if (item.isDirectory && item.expandable) {
+                  toggleExplorerDir(item.path);
+                } else if (!item.isDirectory) {
+                  onSelectFile(item.path);
+                }
+              }}
             >
               {#if item.isDirectory}
-                <Folder size={14} class="text-[var(--app-link)]" />
+                {#if item.expandable}
+                  {#if collapsedByPath[item.path]}
+                    <ChevronRight size={14} class="shrink-0 text-[var(--app-fg-muted)]" />
+                  {:else}
+                    <ChevronDown size={14} class="shrink-0 text-[var(--app-fg-muted)]" />
+                  {/if}
+                {:else}
+                  <span class="inline-block w-[14px] shrink-0" aria-hidden="true"></span>
+                {/if}
+                <Folder size={14} class="shrink-0 text-[var(--app-link)]" />
               {:else}
-                <FileText size={14} class="text-[var(--app-icon-muted)]" />
+                <span class="inline-block w-[14px] shrink-0" aria-hidden="true"></span>
+                <FileText size={14} class="shrink-0 text-[var(--app-icon-muted)]" />
               {/if}
-              <span class="truncate text-left">{item.name}</span>
+              <span class="truncate text-left min-w-0">{item.name}</span>
             </button>
           {/each}
         {/if}
       </div>
     {/if}
   </div>
+
+  {#if explorerFileMenu && onExplorerRenameFile && onExplorerDeleteFile}
+    <!-- svelte-ignore a11y_click_events_have_key_events -->
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div
+      class="fixed inset-0 z-[450]"
+      onclick={() => closeExplorerFileMenu()}
+      oncontextmenu={(e) => {
+        e.preventDefault();
+        closeExplorerFileMenu();
+      }}
+      role="presentation"
+    >
+      <div
+        class="fixed z-[451] min-w-[11rem] rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)] py-1 text-xs shadow-lg"
+        style:left="{explorerFileMenu.x}px"
+        style:top="{explorerFileMenu.y}px"
+        onclick={(e) => e.stopPropagation()}
+        onpointerdown={(e) => e.stopPropagation()}
+        role="menu"
+        tabindex="-1"
+        aria-label="File actions"
+      >
+        <button
+          type="button"
+          role="menuitem"
+          class="flex w-full px-3 py-2 text-left hover:bg-[var(--app-surface-hover)] text-[var(--app-fg)]"
+          onclick={() => {
+            const p = explorerFileMenu!.path;
+            closeExplorerFileMenu();
+            onExplorerRenameFile(p);
+          }}
+        >
+          Rename…
+        </button>
+        <button
+          type="button"
+          role="menuitem"
+          class="flex w-full px-3 py-2 text-left hover:bg-[var(--app-surface-hover)] text-red-600 dark:text-red-400"
+          onclick={() => {
+            const p = explorerFileMenu!.path;
+            closeExplorerFileMenu();
+            void onExplorerDeleteFile(p);
+          }}
+        >
+          Delete…
+        </button>
+      </div>
+    </div>
+  {/if}
 </aside>

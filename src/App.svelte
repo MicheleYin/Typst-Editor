@@ -25,6 +25,10 @@
     isTypstPath,
     isSvgSourcePath,
   } from "./lib/editorLanguage";
+  import {
+    createAssetPreviewUrl,
+    revokeAssetPreviewUrl,
+  } from "./lib/assetPreviewUrl";
   import EditorQuickActions from "./components/EditorQuickActions.svelte";
   import {
     syncAppShortcuts,
@@ -56,6 +60,15 @@
     type IosProjectSummary,
   } from "./lib/iosProjects";
   import {
+    loadFolderExplorerTree,
+    remapFolderExplorerPaths,
+    type FolderExplorerNode,
+  } from "./lib/folderExplorerTree";
+  import {
+    projectRenamePath as renamePathOnDisk,
+    projectRemovePath,
+  } from "./lib/projectFileOps";
+  import {
     desktopReadTextFile,
     desktopWriteTextFile,
     desktopReadDir,
@@ -84,6 +97,11 @@
     assetKind?: "image" | "pdf";
   };
   let openFiles = $state<OpenEditorTab[]>([]);
+
+  function revokeBlobUrlsInTabs(tabs: OpenEditorTab[]) {
+    for (const t of tabs) revokeAssetPreviewUrl(t.assetUrl);
+  }
+
   let currentFilePath = $state<string | null>(null);
   let currentFolder = $state<string | null>(null);
   let iosProjectsList = $state<IosProjectSummary[]>([]);
@@ -106,6 +124,11 @@
   let saveAsFilename = $state("untitled.typ");
   let saveAsDocsRoot = $state<string | null>(null);
   let saveAsIntent = $state<"saveAs" | "newFile">("saveAs");
+
+  let explorerRenameModalOpen = $state(false);
+  let explorerRenameFromPath = $state<string | null>(null);
+  let explorerRenameNewName = $state("");
+  let explorerRenameError = $state("");
 
   function touchProjectMetaUpdated() {
     if (!iosProjectPath) return;
@@ -146,6 +169,7 @@
     if (!iosProjectPath) return;
     const path = currentFilePath;
     if (!path || !path.startsWith(iosProjectPath)) return;
+    if (openFiles.find((f) => f.path === path)?.isBinary) return;
     const text = content;
     try {
       await writeFileAtPath(path, text);
@@ -406,7 +430,7 @@
   let scale = $state(1);
   let translateX = $state(0);
   let translateY = $state(0);
-  let folderFiles = $state<{ name: string; path: string; isDirectory: boolean }[]>([]);
+  let folderFiles = $state<FolderExplorerNode[]>([]);
 
   const SIDEBAR_W_KEY = "typst-editor-sidebar-width";
   const SIDEBAR_MIN = 160;
@@ -451,6 +475,11 @@
   );
   let editorLanguageId = $derived(monacoLanguageIdFromPath(currentFilePath ?? "untitled.typ"));
   let isCurrentBinary = $derived(!!currentTab?.isBinary);
+  /** Raster / PDF: full-width preview only (no Monaco). */
+  let isPreviewOnlyMedia = $derived(
+    !!currentTab?.isBinary &&
+      (currentTab?.assetKind === "image" || currentTab?.assetKind === "pdf"),
+  );
 
   let currentFileDirty = $derived(currentTab?.isDirty ?? false);
   let currentFileLastSaved = $derived(currentTab?.lastSaved ?? null);
@@ -575,14 +604,41 @@
       if (existing) {
         content = existing.content;
         currentFilePath = path;
-        editor?.setValue(content);
+        if (existing.isBinary) {
+          previewVisible = true;
+        } else {
+          editor?.setValue(content);
+        }
+        return;
+      }
+
+      const name = path.split("/").pop() || path;
+
+      if (isBinaryAssetPath(path)) {
+        const preview = await createAssetPreviewUrl(path, projectsUseDocumentDir);
+        const assetUrl = preview?.url;
+        openFiles = [
+          ...openFiles,
+          {
+            path,
+            name,
+            content: "",
+            isDirty: false,
+            lastSaved: null,
+            isBinary: true,
+            assetKind: isPdfPath(path) ? "pdf" : "image",
+            assetUrl,
+          },
+        ];
+        content = "";
+        currentFilePath = path;
+        previewVisible = true;
         return;
       }
 
       const text = projectsUseDocumentDir
         ? await readTextFile(path)
         : await desktopReadTextFile(path);
-      const name = path.split("/").pop() || path;
       openFiles = [...openFiles, { path, name, content: text, isDirty: false, lastSaved: null }];
       content = text;
       currentFilePath = path;
@@ -598,6 +654,8 @@
     }
     const index = openFiles.findIndex((f) => f.path === path);
     if (index !== -1) {
+      const closing = openFiles[index];
+      revokeAssetPreviewUrl(closing?.assetUrl);
       const newFiles = [...openFiles];
       newFiles.splice(index, 1);
       openFiles = newFiles;
@@ -616,20 +674,7 @@
   }
 
   async function loadFolderFiles(folderPath: string) {
-    const entries = projectsUseDocumentDir
-      ? await readDir(folderPath)
-      : await desktopReadDir(folderPath);
-    folderFiles = entries
-      .filter((e) => !e.name?.startsWith("."))
-      .map((e) => ({
-        name: e.name || "",
-        path: `${folderPath}/${e.name}`,
-        isDirectory: e.isDirectory,
-      }))
-      .sort((a, b) => {
-        if (a.isDirectory === b.isDirectory) return a.name.localeCompare(b.name);
-        return a.isDirectory ? -1 : 1;
-      });
+    folderFiles = await loadFolderExplorerTree(folderPath, projectsUseDocumentDir);
   }
 
   async function refreshIosProjects() {
@@ -690,6 +735,7 @@
     iosProjectFolderId = p.folderId;
     iosProjectTitle = p.title;
     currentFolder = p.absPath;
+    revokeBlobUrlsInTabs(openFiles);
     openFiles = [];
     currentFilePath = null;
     await loadFolderFiles(p.absPath);
@@ -739,6 +785,7 @@
     iosProjectFolderId = null;
     iosProjectTitle = "";
     currentFolder = null;
+    revokeBlobUrlsInTabs(openFiles);
     openFiles = [];
     currentFilePath = null;
     content = "";
@@ -896,12 +943,9 @@
         if (currentFilePath?.startsWith(oldAbs)) {
           currentFilePath = newAbs + currentFilePath.slice(oldAbs.length);
         }
-        folderFiles = folderFiles.map((ff) => ({
-          ...ff,
-          path: ff.path.startsWith(oldAbs)
-            ? newAbs + ff.path.slice(oldAbs.length)
-            : ff.path,
-        }));
+        folderFiles = remapFolderExplorerPaths(folderFiles, (p) =>
+          p.startsWith(oldAbs) ? newAbs + p.slice(oldAbs.length) : p,
+        );
       }
       await refreshIosProjects();
       return null;
@@ -946,6 +990,104 @@
       await loadFolderFiles(currentFolder);
     } catch (err) {
       error = `Error refreshing folder: ${err}`;
+    }
+  }
+
+  function normalizeFsPath(p: string): string {
+    return p.replace(/\\/g, "/").replace(/\/+$/, "");
+  }
+
+  function isExplorerPathInsideProject(filePath: string): boolean {
+    if (!iosProjectPath) return false;
+    const root = normalizeFsPath(iosProjectPath);
+    const norm = normalizeFsPath(filePath);
+    return norm.startsWith(`${root}/`);
+  }
+
+  function openExplorerRenameModal(path: string) {
+    const name = path.split(/[/\\]/).pop() || "";
+    explorerRenameFromPath = path;
+    explorerRenameNewName = name;
+    explorerRenameError = "";
+    explorerRenameModalOpen = true;
+  }
+
+  function closeExplorerRenameModal() {
+    explorerRenameModalOpen = false;
+    explorerRenameFromPath = null;
+    explorerRenameNewName = "";
+    explorerRenameError = "";
+  }
+
+  async function confirmExplorerRenameModal() {
+    if (!explorerRenameFromPath || !iosProjectPath) return;
+    const oldPath = explorerRenameFromPath;
+    if (iosProjectPath && currentFilePath === oldPath) {
+      await iosFlushCurrentEditor();
+    }
+    const name = explorerRenameNewName.trim();
+    if (!name || name === "." || name === "..") {
+      explorerRenameError = "Enter a valid file name.";
+      return;
+    }
+    if (name.includes("/") || name.includes("\\")) {
+      explorerRenameError = "Name cannot contain path separators.";
+      return;
+    }
+    try {
+      const parentIdx = Math.max(
+        oldPath.lastIndexOf("/"),
+        oldPath.lastIndexOf("\\"),
+      );
+      const parent =
+        parentIdx >= 0 ? oldPath.slice(0, parentIdx) : iosProjectPath;
+      const newPath = await join(parent, name);
+      const root = normalizeFsPath(iosProjectPath);
+      const newNorm = normalizeFsPath(newPath);
+      if (newNorm !== root && !newNorm.startsWith(`${root}/`)) {
+        explorerRenameError = "Invalid path.";
+        return;
+      }
+      if (newPath === oldPath) {
+        closeExplorerRenameModal();
+        return;
+      }
+      await renamePathOnDisk(oldPath, newPath, projectsUseDocumentDir);
+      openFiles = openFiles.map((f) =>
+        f.path === oldPath ? { ...f, path: newPath, name } : f,
+      );
+      if (currentFilePath === oldPath) {
+        currentFilePath = newPath;
+      }
+      closeExplorerRenameModal();
+      await loadFolderFiles(iosProjectPath);
+      touchProjectMetaUpdated();
+      error = "";
+    } catch (e) {
+      explorerRenameError = String(e);
+    }
+  }
+
+  async function handleExplorerDeleteFile(path: string) {
+    if (!iosProjectPath || !isExplorerPathInsideProject(path)) return;
+    const base = path.split(/[/\\]/).pop() || path;
+    const dirty = openFiles.find((f) => f.path === path)?.isDirty;
+    const ok = await ask(
+      `Delete “${base}”? This cannot be undone.${dirty ? " Unsaved changes will be lost." : ""}`,
+      {
+        title: "Delete file",
+        kind: "warning",
+      },
+    );
+    if (!ok) return;
+    try {
+      await projectRemovePath(path, projectsUseDocumentDir, { recursive: false });
+      await handleCloseFile(path);
+      await loadFolderFiles(iosProjectPath);
+      touchProjectMetaUpdated();
+      error = "";
+    } catch (e) {
+      await message(String(e), { title: "Delete failed", kind: "error" });
     }
   }
 
@@ -1456,10 +1598,18 @@
         /* web dev / older host: keep native assumption (no in-app menu) */
       });
 
-    void invoke<boolean>("workspace_projects_use_document_dir").then((v) => {
-      projectsUseDocumentDir = v;
-    });
-    void refreshIosProjects();
+    // Must resolve workspace mode before loading the hub list: default state is iOS-style
+    // (`true`). On macOS/Windows/Linux, `false` means "open folders on disk" + Rust-backed
+    // `recent-desktop-projects.json`. Calling `refreshIosProjects()` too early used the wrong
+    // branch and made recents look empty after every restart.
+    void (async () => {
+      try {
+        projectsUseDocumentDir = await invoke<boolean>("workspace_projects_use_document_dir");
+      } catch {
+        /* web / odd host: keep default */
+      }
+      await refreshIosProjects();
+    })();
 
     const unlistenMenu = listen("menu-event", (event) => {
       dispatchMenuId(event.payload as string);
@@ -1570,7 +1720,8 @@
     onToggleSidebar={() => (sidebarVisible = !sidebarVisible)}
     {previewVisible}
     onTogglePreview={() => (previewVisible = !previewVisible)}
-    showExportPdf={!isProjectHub}
+    suppressPreviewToggle={isPreviewOnlyMedia}
+    showExportPdf={!isProjectHub && !isCurrentBinary}
     {pdfExporting}
     onExportPdf={handleExportPdf}
     onShowCommandPalette={!isProjectHub
@@ -1647,6 +1798,61 @@
             onclick={() => void confirmSaveAsModal()}
           >
             Save
+          </button>
+        </div>
+      </div>
+    </div>
+  {/if}
+
+  {#if explorerRenameModalOpen && explorerRenameFromPath}
+    <!-- svelte-ignore a11y_click_events_have_key_events -->
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div
+      class="fixed inset-0 z-[400] flex items-end justify-center sm:items-center p-4 bg-black/50"
+      onclick={() => closeExplorerRenameModal()}
+      role="presentation"
+    >
+      <div
+        class="w-full max-w-md rounded-xl border border-[var(--app-border)] bg-[var(--app-bg)] shadow-xl p-4 space-y-4"
+        role="dialog"
+        aria-labelledby="explorer-rename-title"
+        tabindex="0"
+        onclick={(e) => e.stopPropagation()}
+      >
+        <h2 id="explorer-rename-title" class="text-lg font-semibold text-[var(--app-fg)]">
+          Rename file
+        </h2>
+        <p class="text-sm text-[var(--app-fg-secondary)]">
+          New name in the same folder (include the extension, e.g. <code class="text-[10px]">.typ</code>).
+        </p>
+        <input
+          type="text"
+          bind:value={explorerRenameNewName}
+          class="w-full rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-elevated)] px-3 py-2.5 text-[var(--app-fg)] text-base"
+          autocomplete="off"
+          autocapitalize="off"
+          enterkeyhint="done"
+          onkeydown={(e) => e.key === "Enter" && void confirmExplorerRenameModal()}
+        />
+        {#if explorerRenameError}
+          <p class="text-sm text-red-600 dark:text-red-400" role="alert">
+            {explorerRenameError}
+          </p>
+        {/if}
+        <div class="flex justify-end gap-2 pt-2">
+          <button
+            type="button"
+            class="px-4 py-2 rounded-lg text-sm font-medium text-[var(--app-fg-secondary)] hover:bg-[var(--app-btn-ghost-hover)]"
+            onclick={() => closeExplorerRenameModal()}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            class="px-4 py-2 rounded-lg text-sm font-semibold bg-blue-600 hover:bg-blue-500 text-white"
+            onclick={() => void confirmExplorerRenameModal()}
+          >
+            Rename
           </button>
         </div>
       </div>
@@ -1746,6 +1952,8 @@
         onSelectFile={openFileByPath}
         onCloseFile={handleCloseFile}
         onRefreshFolder={handleRefreshFolderExplorer}
+        onExplorerRenameFile={openExplorerRenameModal}
+        onExplorerDeleteFile={handleExplorerDeleteFile}
         iosProjectTitle={iosProjectPath ? iosProjectTitle : null}
         onIosBackToProjects={() => void leaveIosProject()}
       />
@@ -1773,74 +1981,17 @@
 
     <div
       bind:this={editorPreviewRegion}
-      class="flex-1 min-h-0 min-w-0 {previewVisible ? 'grid' : 'flex'}"
-      style:grid-template-columns={previewVisible
+      class="flex-1 min-h-0 min-w-0 {isPreviewOnlyMedia
+        ? 'flex'
+        : previewVisible
+          ? 'grid'
+          : 'flex'}"
+      style:grid-template-columns={!isPreviewOnlyMedia && previewVisible
         ? `minmax(${EDITOR_PANE_MIN}px, ${Math.max(1, Math.round(splitRatio * 1000))}fr) ${SPLIT_GRIP_PX}px minmax(${PREVIEW_PANE_MIN}px, ${Math.max(1, Math.round((1 - splitRatio) * 1000))}fr)`
         : undefined}
     >
-      <div
-        class="h-full relative min-w-0 flex flex-col border-r border-[var(--app-border)] overflow-hidden {previewVisible
-          ? 'min-h-0'
-          : 'flex-1 min-h-0'}"
-      >
-        <EditorQuickActions
-          editor={editor}
-          typstFontFaces={typstFontFaces}
-          showTypstToolbar={!isCurrentBinary && !!(currentFilePath && isTypstPath(currentFilePath))}
-        />
-        <div class="relative flex-1 min-h-0 min-w-0 flex flex-col min-w-0">
-          {#if isCurrentBinary}
-            <div
-              class="absolute inset-0 z-20 flex flex-col items-center justify-center gap-1 px-6 text-center bg-[var(--app-bg)] border-b border-[var(--app-border)]"
-              role="status"
-            >
-              <span class="text-sm font-medium text-[var(--app-fg-secondary)]">Preview-only file</span>
-              <span class="text-xs text-[var(--app-fg-muted)] max-w-xs"
-                >Image or PDF — use the panel on the right. This file is not edited as text here.</span
-              >
-            </div>
-          {/if}
-          <MonacoEditorPane
-            initialValue={content}
-            languageId={editorLanguageId}
-            readOnly={isCurrentBinary}
-            {appZoom}
-            monacoTheme={monacoThemeResolved}
-            onContentChange={onEditorContentChange}
-            onReady={(ed) => {
-              editor = ed;
-              monacoMenuRef.current = ed;
-            }}
-            onDispose={() => {
-              editor = undefined;
-              monacoMenuRef.current = undefined;
-            }}
-          />
-        </div>
-      </div>
-
-      {#if previewVisible}
-        <!-- svelte-ignore a11y_no_static_element_interactions -->
-        <div
-          onpointerdown={handleEditorSplitPointerDown}
-          class="touch-none shrink-0 z-10 relative group flex w-2 items-stretch justify-center cursor-col-resize"
-          role="separator"
-          aria-orientation="vertical"
-          aria-label="Resize editor and preview"
-        >
-          <div
-            class="w-px self-stretch min-h-[120px] max-h-[80vh] my-auto rounded-full transition-colors bg-[var(--app-grip)] hover:bg-[var(--app-grip-hover)] {isResizing
-              ? 'bg-[var(--app-grip-active)]'
-              : ''}"
-          ></div>
-          <div
-            class="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 h-10 w-6 flex items-center justify-center rounded-md bg-[var(--app-bg)] border border-[var(--app-border)] opacity-0 sm:group-hover:opacity-100 transition-opacity max-sm:hidden"
-          >
-            <GripVertical size={16} class="text-[var(--app-icon-muted)]" />
-          </div>
-        </div>
-
-        <div class="h-full flex flex-col min-w-0 min-h-0 overflow-hidden">
+      {#if isPreviewOnlyMedia}
+        <div class="h-full flex flex-col min-w-0 min-h-0 flex-1 overflow-hidden">
           <FilePreviewPane
             mode={filePreviewMode}
             bind:currentPage
@@ -1849,6 +2000,68 @@
             bind:translateY
           />
         </div>
+      {:else}
+        <div
+          class="h-full relative min-w-0 flex flex-col border-r border-[var(--app-border)] overflow-hidden {previewVisible
+            ? 'min-h-0'
+            : 'flex-1 min-h-0'}"
+        >
+          <EditorQuickActions
+            editor={editor}
+            typstFontFaces={typstFontFaces}
+            showTypstToolbar={!isCurrentBinary && !!(currentFilePath && isTypstPath(currentFilePath))}
+          />
+          <div class="relative flex-1 min-h-0 min-w-0 flex flex-col">
+            <MonacoEditorPane
+              initialValue={content}
+              languageId={editorLanguageId}
+              readOnly={isCurrentBinary}
+              {appZoom}
+              monacoTheme={monacoThemeResolved}
+              onContentChange={onEditorContentChange}
+              onReady={(ed) => {
+                editor = ed;
+                monacoMenuRef.current = ed;
+              }}
+              onDispose={() => {
+                editor = undefined;
+                monacoMenuRef.current = undefined;
+              }}
+            />
+          </div>
+        </div>
+
+        {#if previewVisible}
+          <!-- svelte-ignore a11y_no_static_element_interactions -->
+          <div
+            onpointerdown={handleEditorSplitPointerDown}
+            class="touch-none shrink-0 z-10 relative group flex w-2 items-stretch justify-center cursor-col-resize"
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize editor and preview"
+          >
+            <div
+              class="w-px self-stretch min-h-[120px] max-h-[80vh] my-auto rounded-full transition-colors bg-[var(--app-grip)] hover:bg-[var(--app-grip-hover)] {isResizing
+                ? 'bg-[var(--app-grip-active)]'
+                : ''}"
+            ></div>
+            <div
+              class="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 h-10 w-6 flex items-center justify-center rounded-md bg-[var(--app-bg)] border border-[var(--app-border)] opacity-0 sm:group-hover:opacity-100 transition-opacity max-sm:hidden"
+            >
+              <GripVertical size={16} class="text-[var(--app-icon-muted)]" />
+            </div>
+          </div>
+
+          <div class="h-full flex flex-col min-w-0 min-h-0 overflow-hidden">
+            <FilePreviewPane
+              mode={filePreviewMode}
+              bind:currentPage
+              bind:scale
+              bind:translateX
+              bind:translateY
+            />
+          </div>
+        {/if}
       {/if}
     </div>
     {/if}

@@ -82,6 +82,10 @@ export async function desktopRemove(path: string, recursive: boolean): Promise<v
   await invoke("desktop_fs_remove", { path, recursive });
 }
 
+export async function desktopRenamePath(from: string, to: string): Promise<void> {
+  await invoke("desktop_fs_rename", { from, to });
+}
+
 export async function desktopCopyFile(from: string, to: string): Promise<void> {
   await invoke("desktop_fs_copy_file", { from, to });
 }
