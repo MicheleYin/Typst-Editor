@@ -16,9 +16,5 @@ function ensureMarkedConfigured(): void {
 export function renderMarkdownToSafeHtml(source: string): string {
   ensureMarkedConfigured();
   const raw = marked.parse(source, { async: false }) as string;
-  return DOMPurify.sanitize(raw, {
-    USE_PROFILES: { html: true },
-    // Allow common GFM elements
-    ADD_ATTR: ["target"],
-  });
+  return DOMPurify.sanitize(raw, { USE_PROFILES: { html: true } });
 }

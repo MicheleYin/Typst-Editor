@@ -112,12 +112,12 @@ export function isSvgSourcePath(filePath: string): boolean {
   return filePath.toLowerCase().endsWith(".svg");
 }
 
-export function isMarkdownPath(filePath: string): boolean {
+/** Files that get a rendered Markdown preview (GFM). `.mdx` is excluded — not valid GFM. */
+export function isMarkdownPreviewPath(filePath: string): boolean {
   const lower = filePath.toLowerCase();
   return (
     lower.endsWith(".md") ||
     lower.endsWith(".markdown") ||
-    lower.endsWith(".mdwn") ||
-    lower.endsWith(".mdx")
+    lower.endsWith(".mdwn")
   );
 }

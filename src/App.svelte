@@ -24,7 +24,7 @@
     isPdfPath,
     isTypstPath,
     isSvgSourcePath,
-    isMarkdownPath,
+    isMarkdownPreviewPath,
   } from "./lib/editorLanguage";
   import { renderMarkdownToSafeHtml } from "./lib/markdownPreview";
   import {
@@ -510,7 +510,7 @@
     if (isSvgSourcePath(path)) {
       return { kind: "svg-inline" as const, svg: content };
     }
-    if (isMarkdownPath(path)) {
+    if (isMarkdownPreviewPath(path)) {
       return {
         kind: "markdown" as const,
         html: renderMarkdownToSafeHtml(content),
