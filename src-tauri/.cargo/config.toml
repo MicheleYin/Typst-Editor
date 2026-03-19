@@ -1,0 +1,6 @@
+# Match bundle minimumSystemVersion (macOS 12+) for arm64-only App Store builds.
+[target.aarch64-apple-darwin]
+rustflags = ["-C", "link-arg=-mmacosx-version-min=12.0"]
+
+[target.x86_64-apple-darwin]
+rustflags = ["-C", "link-arg=-mmacosx-version-min=12.0"]
