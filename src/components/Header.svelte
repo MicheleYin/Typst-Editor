@@ -14,6 +14,7 @@
   import pkg from "../../package.json";
   import CustomSelect from "./CustomSelect.svelte";
   import InAppMenu from "./InAppMenu.svelte";
+  import { isIpadOs } from "../lib/ipadOs";
   import appIcon from "../assets/icon.png";
 
   let editorVersion = $state("");
@@ -107,6 +108,10 @@
     if (minutes < 60) return `${minutes}m ago`;
     return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   }
+
+  const ipadOsHeaderLeadBrand = $derived(
+    Boolean(showInAppMenu && onInAppMenuAction && isIpadOs()),
+  );
 </script>
 
 <header
@@ -118,37 +123,53 @@
     : undefined}
 >
   <div class="flex items-center gap-1 mr-4">
-    {#if showInAppMenu && onInAppMenuAction}
-      <InAppMenu
-        onAction={onInAppMenuAction}
-        landingPage={inAppMenuLanding}
-        {iosMenuHub}
-        {iosMenuProject}
-        {hubAllowsFolderImport}
-        {hubDirectFolders}
-        {exportTypstEnabled}
+    {#snippet hubBackButton()}
+      {#if showNativeBackToHub && onBackToProjects}
+        <button
+          type="button"
+          onclick={() => void onBackToProjects()}
+          class="p-1.5 rounded transition-colors text-[var(--app-fg-secondary)] hover:bg-[var(--app-btn-ghost-hover)] hover:text-[var(--app-link)] shrink-0"
+          title="All projects"
+          aria-label="All projects"
+        >
+          <ChevronLeft size={20} aria-hidden="true" />
+        </button>
+      {/if}
+    {/snippet}
+    {#snippet appBrand()}
+      <img
+        src={appIcon}
+        alt=""
+        width="24"
+        height="24"
+        class="w-6 h-6 rounded object-cover shadow-sm shrink-0"
+        aria-hidden="true"
       />
+      <span class="text-xs font-semibold text-[var(--app-fg-secondary)]">{appName}</span>
+    {/snippet}
+    {#snippet inAppMenuBlock()}
+      {#if showInAppMenu && onInAppMenuAction}
+        <InAppMenu
+          onAction={onInAppMenuAction}
+          landingPage={inAppMenuLanding}
+          {iosMenuHub}
+          {iosMenuProject}
+          {hubAllowsFolderImport}
+          {hubDirectFolders}
+          {exportTypstEnabled}
+        />
+      {/if}
+    {/snippet}
+
+    {#if ipadOsHeaderLeadBrand}
+      {@render appBrand()}
+      {@render hubBackButton()}
+      {@render inAppMenuBlock()}
+    {:else}
+      {@render inAppMenuBlock()}
+      {@render hubBackButton()}
+      {@render appBrand()}
     {/if}
-    {#if showNativeBackToHub && onBackToProjects}
-      <button
-        type="button"
-        onclick={() => void onBackToProjects()}
-        class="p-1.5 rounded transition-colors text-[var(--app-fg-secondary)] hover:bg-[var(--app-btn-ghost-hover)] hover:text-[var(--app-link)] shrink-0"
-        title="All projects"
-        aria-label="All projects"
-      >
-        <ChevronLeft size={20} aria-hidden="true" />
-      </button>
-    {/if}
-    <img
-      src={appIcon}
-      alt=""
-      width="24"
-      height="24"
-      class="w-6 h-6 rounded object-cover shadow-sm shrink-0"
-      aria-hidden="true"
-    />
-    <span class="text-xs font-semibold text-[var(--app-fg-secondary)]">{appName}</span>
   </div>
 
   <div class="flex-1 flex items-center justify-center">

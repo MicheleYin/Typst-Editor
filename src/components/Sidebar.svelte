@@ -5,6 +5,7 @@
     ChevronRight,
     ChevronDown,
     RefreshCw,
+    MoreVertical,
   } from "lucide-svelte";
   import type { FolderExplorerNode } from "../lib/folderExplorerTree";
 
@@ -103,6 +104,7 @@
   function openExplorerFileMenu(
     e: MouseEvent,
     path: string,
+    anchor: "pointer" | "trigger" = "pointer",
   ) {
     e.preventDefault();
     e.stopPropagation();
@@ -111,6 +113,17 @@
     const mh = 88;
     let x = e.clientX;
     let y = e.clientY;
+    if (
+      anchor === "trigger" &&
+      e.currentTarget instanceof HTMLElement
+    ) {
+      const r = e.currentTarget.getBoundingClientRect();
+      x = r.right - mw;
+      y = r.bottom + 4;
+      if (typeof window !== "undefined" && y + mh > window.innerHeight - pad) {
+        y = r.top - mh - 4;
+      }
+    }
     if (typeof window !== "undefined") {
       x = Math.min(x, window.innerWidth - mw - pad);
       y = Math.min(y, window.innerHeight - mh - pad);
@@ -200,31 +213,19 @@
             {@const tabMeta = item.isDirectory
               ? undefined
               : openFileMetaByPath.get(item.path)}
-            <button
-              type="button"
-              class="group flex w-full min-w-0 items-center gap-1.5 py-0.5 pr-2 text-xs hover:bg-[var(--app-surface-hover)] cursor-pointer {activeFile === item.path
-                ? 'bg-[var(--app-surface-active)] text-[var(--app-active-fg)]'
-                : 'text-[var(--app-fg-secondary)]'}"
-              style:padding-left="{10 + item.depth * 14}px"
-              oncontextmenu={(e) => {
-                if (
-                  item.isDirectory ||
-                  !onExplorerRenameFile ||
-                  !onExplorerDeleteFile
-                ) {
-                  return;
-                }
-                openExplorerFileMenu(e, item.path);
-              }}
-              onclick={() => {
-                if (item.isDirectory && item.expandable) {
-                  toggleExplorerDir(item.path);
-                } else if (!item.isDirectory) {
-                  onSelectFile(item.path);
-                }
-              }}
-            >
-              {#if item.isDirectory}
+            {#if item.isDirectory}
+              <button
+                type="button"
+                class="group flex w-full min-w-0 items-center gap-1.5 py-0.5 pr-2 text-xs hover:bg-[var(--app-surface-hover)] cursor-pointer {activeFile === item.path
+                  ? 'bg-[var(--app-surface-active)] text-[var(--app-active-fg)]'
+                  : 'text-[var(--app-fg-secondary)]'}"
+                style:padding-left="{10 + item.depth * 14}px"
+                onclick={() => {
+                  if (item.expandable) {
+                    toggleExplorerDir(item.path);
+                  }
+                }}
+              >
                 {#if item.expandable}
                   {#if collapsedByPath[item.path]}
                     <ChevronRight size={14} class="shrink-0 text-[var(--app-fg-muted)]" />
@@ -235,32 +236,70 @@
                   <span class="inline-block w-[14px] shrink-0" aria-hidden="true"></span>
                 {/if}
                 <Folder size={14} class="shrink-0 text-[var(--app-link)]" />
-              {:else}
-                <span class="inline-block w-[14px] shrink-0" aria-hidden="true"></span>
-                <div class="relative shrink-0">
-                  <FileText
-                    size={14}
-                    class={activeFile === item.path
-                      ? "text-[var(--app-link)]"
-                      : "text-[var(--app-icon-muted)]"}
-                  />
-                  {#if tabMeta?.isDirty}
-                    <div
-                      class="absolute -top-1 -right-1 w-2 h-2 bg-blue-500 rounded-full border-2 border-[var(--app-surface)]"
-                      aria-hidden="true"
-                    ></div>
-                  {/if}
-                </div>
-              {/if}
-              <span class="truncate text-left min-w-0 flex-1">{item.name}</span>
-              {#if tabMeta?.lastSaved && !tabMeta?.isDirty}
-                <span
-                  class="shrink-0 text-[9px] text-[var(--app-fg-muted)] whitespace-nowrap opacity-60 group-hover:opacity-100 transition-opacity"
+                <span class="truncate text-left min-w-0 flex-1">{item.name}</span>
+              </button>
+            {:else}
+              <div
+                class="group flex w-full min-w-0 items-center gap-0.5 py-0.5 pr-1 text-xs {activeFile === item.path
+                  ? 'bg-[var(--app-surface-active)] text-[var(--app-active-fg)]'
+                  : 'text-[var(--app-fg-secondary)] hover:bg-[var(--app-surface-hover)]'}"
+                style:padding-left="{10 + item.depth * 14}px"
+              >
+                <button
+                  type="button"
+                  class="flex min-h-0 min-w-0 flex-1 cursor-pointer items-center gap-1.5 rounded-sm py-0 text-left"
+                  oncontextmenu={(e) => {
+                    if (!onExplorerRenameFile || !onExplorerDeleteFile) {
+                      return;
+                    }
+                    openExplorerFileMenu(e, item.path);
+                  }}
+                  onclick={() => onSelectFile(item.path)}
                 >
-                  {formatRelativeTime(tabMeta.lastSaved)}
-                </span>
-              {/if}
-            </button>
+                  <span class="inline-block w-[14px] shrink-0" aria-hidden="true"></span>
+                  <div class="relative shrink-0">
+                    <FileText
+                      size={14}
+                      class={activeFile === item.path
+                        ? "text-[var(--app-link)]"
+                        : "text-[var(--app-icon-muted)]"}
+                    />
+                    {#if tabMeta?.isDirty}
+                      <div
+                        class="absolute -top-1 -right-1 w-2 h-2 bg-blue-500 rounded-full border-2 border-[var(--app-surface)]"
+                        aria-hidden="true"
+                      ></div>
+                    {/if}
+                  </div>
+                  <span class="min-w-0 flex-1 truncate text-left">{item.name}</span>
+                  {#if tabMeta?.lastSaved && !tabMeta?.isDirty}
+                    <span
+                      class="shrink-0 whitespace-nowrap text-[9px] text-[var(--app-fg-muted)] opacity-60 transition-opacity group-hover:opacity-100"
+                    >
+                      {formatRelativeTime(tabMeta.lastSaved)}
+                    </span>
+                  {/if}
+                </button>
+                {#if onExplorerRenameFile && onExplorerDeleteFile}
+                  <button
+                    type="button"
+                    class="shrink-0 rounded p-0.5 text-[var(--app-icon-muted)] hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-fg-secondary)] {activeFile === item.path
+                      ? 'hover:text-[var(--app-active-fg)]'
+                      : ''}"
+                    aria-label="File actions"
+                    aria-haspopup="menu"
+                    aria-expanded={explorerFileMenu?.path === item.path}
+                    onclick={(e) => openExplorerFileMenu(e, item.path, "trigger")}
+                    oncontextmenu={(e) => {
+                      e.preventDefault();
+                      openExplorerFileMenu(e, item.path, "trigger");
+                    }}
+                  >
+                    <MoreVertical size={14} />
+                  </button>
+                {/if}
+              </div>
+            {/if}
           {/each}
         {/if}
       </div>

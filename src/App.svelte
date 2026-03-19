@@ -7,11 +7,13 @@
   import { open, save, message, ask } from "@tauri-apps/plugin-dialog";
   import {
     readTextFile,
+    readFile,
     writeTextFile,
+    writeFile,
     readDir,
     BaseDirectory,
   } from "@tauri-apps/plugin-fs";
-  import { join } from "@tauri-apps/api/path";
+  import { dirname, join } from "@tauri-apps/api/path";
   import Header from "./components/Header.svelte";
   import ExportTypstModal, {
     type ExportTypstKindPayload,
@@ -92,6 +94,13 @@
     desktopImportTypIntoProject,
   } from "./lib/desktopProjectFs";
   import pkg from "../package.json";
+
+  /** App Documents-relative root for [`export_typst_stage`] output (iOS). */
+  const EXPORT_STAGING_ROOT = "typst-editor-export-staging";
+
+  function exportStagingRelPath(stagingId: string, fileName: string): string {
+    return `${EXPORT_STAGING_ROOT}/${stagingId}/${fileName}`;
+  }
 
   let appName = $state(pkg.name);
 
@@ -626,10 +635,24 @@
       });
       if (path === null) return;
       if (projectsUseDocumentDir) {
-        await invoke("export_ios_project_zip", {
+        const stage = await invoke<{
+          stagingId: string;
+          fileNames: string[];
+        }>("export_ios_project_zip_stage", {
           folderId: iosProjectFolderId!,
-          outputPath: path,
         });
+        try {
+          const rel = exportStagingRelPath(
+            stage.stagingId,
+            stage.fileNames[0] ?? "project.zip",
+          );
+          const data = await readFile(rel, { baseDir: BaseDirectory.Document });
+          await writeFile(path, data);
+        } finally {
+          await invoke("export_typst_stage_cleanup", {
+            stagingId: stage.stagingId,
+          }).catch(() => {});
+        }
       } else {
         await desktopExportProjectZip(iosProjectPath, path);
       }
@@ -1268,6 +1291,90 @@
           : payload.kind === "png"
             ? "PNG"
             : "HTML";
+
+    /** iOS/iPadOS: Rust `fs::write` cannot use security-scoped save URLs; `plugin-fs` can. */
+    if (projectsUseDocumentDir) {
+      exportBusy = true;
+      let stage: {
+        warnings: CompileDiagnostic[];
+        stagingId: string;
+        fileNames: string[];
+        bundleZip: boolean;
+      } | null = null;
+      try {
+        stage = await invoke<{
+          warnings: CompileDiagnostic[];
+          stagingId: string;
+          fileNames: string[];
+          bundleZip: boolean;
+        }>("export_typst_stage", {
+          content,
+          mainPath: currentFilePath ?? null,
+          outputPath: defaultPath,
+          exportKind: payload,
+        });
+        const saveExt = stage.bundleZip ? "zip" : ext;
+        const saveDefault = `${base}.${saveExt}`;
+        const path = await save({
+          defaultPath: saveDefault,
+          filters: stage.bundleZip
+            ? [{ name: "ZIP archive", extensions: ["zip"] }]
+            : [{ name: filterName, extensions: [ext] }],
+        });
+        if (path === null) return;
+        if (stage.fileNames.length === 1) {
+          const rel = exportStagingRelPath(
+            stage.stagingId,
+            stage.fileNames[0],
+          );
+          const data = await readFile(rel, { baseDir: BaseDirectory.Document });
+          await writeFile(path, data);
+        } else {
+          const dir = await dirname(path);
+          for (const name of stage.fileNames) {
+            const rel = exportStagingRelPath(stage.stagingId, name);
+            const data = await readFile(rel, { baseDir: BaseDirectory.Document });
+            const dest = await join(dir, name);
+            await writeFile(dest, data);
+          }
+        }
+        const w = stage.warnings ?? [];
+        const zipNote = stage.bundleZip
+          ? "\n\nMulti-page export is saved as a ZIP archive (one file per page)."
+          : "";
+        const title =
+          payload.kind === "pdf"
+            ? "Export PDF"
+            : payload.kind === "svg"
+              ? "Export SVG"
+              : payload.kind === "png"
+                ? "Export PNG"
+                : "Export HTML";
+        if (w.length > 0) {
+          const detail = w.map((d) => d.message).join("\n");
+          await message(
+            `Export finished.${zipNote}\n\nCompiler warnings (${w.length}):\n${detail}\n\nTip: this app does not load system fonts for Typst — import fonts in Settings → Typst fonts (or ship them in resources/fonts/bundled).`,
+            { title, kind: "info" },
+          );
+        } else {
+          await message(`Export finished.${zipNote}`, { title, kind: "info" });
+        }
+      } catch (e) {
+        await message(String(e), {
+          title: "Export failed",
+          kind: "error",
+        });
+      } finally {
+        if (stage) {
+          await invoke("export_typst_stage_cleanup", {
+            stagingId: stage.stagingId,
+          }).catch(() => {});
+        }
+        exportBusy = false;
+      }
+      return;
+    }
+
     const path = await save({
       defaultPath,
       filters: [{ name: filterName, extensions: [ext] }],
@@ -1762,11 +1869,12 @@
 
 
 <div
-  class="flex flex-col h-screen bg-[var(--app-bg)] text-[var(--app-fg)] overflow-hidden {isResizing ||
+  class="flex flex-col h-dvh max-h-dvh bg-[var(--app-bg)] text-[var(--app-fg)] overflow-hidden {isResizing ||
   isResizingSidebar
     ? 'cursor-col-resize select-none'
     : ''}"
   style:zoom={appZoom}
+  style:--app-zoom={appZoom}
   style:min-width="{APP_MIN_WIDTH_PX}px"
   style:min-height="{APP_MIN_HEIGHT_PX}px"
 >
@@ -2040,7 +2148,7 @@
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div
         onpointerdown={handleSidebarGripPointerDown}
-        class="touch-none shrink-0 z-10 relative group flex w-2 items-stretch justify-center cursor-col-resize"
+        class="resize-grip-host touch-none shrink-0 z-10 relative group flex w-2 items-stretch justify-center cursor-col-resize"
         title="Drag to resize sidebar"
         role="separator"
         aria-orientation="vertical"
@@ -2052,7 +2160,7 @@
             : ''}"
         ></div>
         <div
-          class="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 h-10 w-6 flex items-center justify-center rounded-md bg-[var(--app-bg)] border border-[var(--app-border)] opacity-0 sm:group-hover:opacity-100 transition-opacity max-sm:hidden"
+          class="resize-grip-hint pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 h-10 w-6 flex items-center justify-center rounded-md bg-[var(--app-bg)] border border-[var(--app-border)]"
         >
           <GripVertical size={16} class="text-[var(--app-icon-muted)]" />
         </div>
@@ -2115,7 +2223,7 @@
           <!-- svelte-ignore a11y_no_static_element_interactions -->
           <div
             onpointerdown={handleEditorSplitPointerDown}
-            class="touch-none shrink-0 z-10 relative group flex w-2 items-stretch justify-center cursor-col-resize"
+            class="resize-grip-host touch-none shrink-0 z-10 relative group flex w-2 items-stretch justify-center cursor-col-resize"
             role="separator"
             aria-orientation="vertical"
             aria-label="Resize editor and preview"
@@ -2126,7 +2234,7 @@
                 : ''}"
             ></div>
             <div
-              class="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 h-10 w-6 flex items-center justify-center rounded-md bg-[var(--app-bg)] border border-[var(--app-border)] opacity-0 sm:group-hover:opacity-100 transition-opacity max-sm:hidden"
+              class="resize-grip-hint pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 h-10 w-6 flex items-center justify-center rounded-md bg-[var(--app-bg)] border border-[var(--app-border)]"
             >
               <GripVertical size={16} class="text-[var(--app-icon-muted)]" />
             </div>
@@ -2153,5 +2261,41 @@
     margin: 0;
     padding: 0;
     overflow: hidden;
+    overscroll-behavior: none;
+  }
+
+  /*
+   * Resize grip badge (GripVertical): was opacity-0 until :hover, which iPadOS never gets.
+   * Show always on touch / coarse pointer; keep hover-to-reveal on fine-pointer desktops.
+   */
+  .resize-grip-hint {
+    opacity: 1;
+    transition: opacity 0.15s ease;
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    .resize-grip-hint {
+      opacity: 0;
+    }
+    .resize-grip-host:hover .resize-grip-hint {
+      opacity: 1;
+    }
+  }
+
+  /* iPadOS / touch: always show (overrides fine+hover if UA mis-reports capabilities) */
+  @media (pointer: coarse), (hover: none) {
+    .resize-grip-hint {
+      opacity: 1;
+    }
+    .resize-grip-host:hover .resize-grip-hint {
+      opacity: 1;
+    }
+  }
+
+  /* Narrow desktop: hide badge (same as old max-sm:hidden); touch still sees it above */
+  @media (max-width: 639px) and (hover: hover) and (pointer: fine) {
+    .resize-grip-hint {
+      display: none !important;
+    }
   }
 </style>

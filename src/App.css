@@ -12,6 +12,12 @@
   box-sizing: border-box;
 }
 
+html {
+  height: 100%;
+  height: 100dvh;
+  overscroll-behavior: none;
+}
+
 html,
 body,
 #root,
@@ -20,13 +26,43 @@ body,
   padding: 0;
   height: 100%;
   width: 100%;
+  min-height: 100vh;
+  min-height: 100dvh;
   overflow: hidden;
+  overscroll-behavior: none;
   background-color: var(--app-bg, #2c3142);
   color: var(--app-fg, #e2e6f4);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  /* App chrome: no text selection; Monaco re-enables below */
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* Monaco editor subtree — allow normal selection (Monaco still hides e.g. gutter via its own CSS) */
+.monaco-editor {
+  user-select: auto;
+  -webkit-user-select: auto;
 }
 
 /* Helps limit double-tap zoom where viewport isn’t locked (e.g. dev in browser). */
 #app {
   touch-action: manipulation;
+}
+
+@supports (overflow: clip) {
+  html,
+  body,
+  #root,
+  #app {
+    overflow-x: clip;
+    overflow-y: clip;
+  }
+}
+
+/*
+ * Root shell uses `zoom` for view zoom; nested zoom on Lucide SVGs inverts that so icon
+ * stroke/size stays visually constant (icons use px width/height, not text em units).
+ */
+.lucide-icon {
+  zoom: calc(1 / var(--app-zoom, 1));
 }

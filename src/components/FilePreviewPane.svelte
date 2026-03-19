@@ -89,6 +89,11 @@
       translateX = 0;
       translateY = 0;
     }
+    if (k === "typst" && prevRasterPreviewKind !== "typst") {
+      scale = 1;
+      translateX = 0;
+      translateY = 0;
+    }
     prevRasterPreviewKind = k;
   });
 
@@ -109,6 +114,9 @@
   let pinchDistStart = 1;
   let pinchDistFiltered = 1;
   let pinchLastRawD = 1;
+  /** Pinch midpoint (viewport px) — for two-finger pan + zoom toward fingers */
+  let pinchMidX = 0;
+  let pinchMidY = 0;
 
   let touchPanning = false;
   let touchPanId = -1;
@@ -131,16 +139,13 @@
     return undefined;
   }
 
-  function setRasterScaleFromViewportCenter(nextScale: number) {
+  /** Zoom toward a viewport point (same math as wheel zoom centered on pane). */
+  function setRasterScaleAtFocalPoint(nextScale: number, fx: number, fy: number) {
     const s = Math.min(SCALE_MAX, Math.max(SCALE_MIN, nextScale));
     const prevScale = scale;
-    const pane = rasterViewportEl;
     const el = rasterContentEl;
     if (Math.abs(s - prevScale) < 1e-6) return;
-    if (pane && el) {
-      const pr = pane.getBoundingClientRect();
-      const fx = pr.left + pr.width / 2;
-      const fy = pr.top + pr.height / 2;
+    if (el) {
       const r = el.getBoundingClientRect();
       const ox = r.left + r.width / 2;
       const oy = r.top + r.height / 2;
@@ -149,6 +154,20 @@
       translateY += (fy - oy) * (1 - k);
     }
     scale = s;
+  }
+
+  function setRasterScaleFromViewportCenter(nextScale: number) {
+    const pane = rasterViewportEl;
+    if (!pane) {
+      scale = Math.min(SCALE_MAX, Math.max(SCALE_MIN, nextScale));
+      return;
+    }
+    const pr = pane.getBoundingClientRect();
+    setRasterScaleAtFocalPoint(
+      nextScale,
+      pr.left + pr.width / 2,
+      pr.top + pr.height / 2,
+    );
   }
 
   function onRasterTouchStart(e: TouchEvent) {
@@ -162,6 +181,8 @@
       pinchDistStart = Math.max(touchDistance(e.touches), 10);
       pinchDistFiltered = pinchDistStart;
       pinchLastRawD = pinchDistStart;
+      pinchMidX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+      pinchMidY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
       e.preventDefault();
     } else if (e.touches.length === 1) {
       const p = e.touches[0];
@@ -177,19 +198,44 @@
   function onRasterTouchMove(e: TouchEvent) {
     if (e.touches.length >= 2 && pinchActive) {
       e.preventDefault();
+      const t0 = e.touches[0];
+      const t1 = e.touches[1];
+      const mx = (t0.clientX + t1.clientX) / 2;
+      const my = (t0.clientY + t1.clientY) / 2;
+
+      const el = rasterContentEl;
+      const r = el?.getBoundingClientRect();
+      const ox = r ? r.left + r.width / 2 : 0;
+      const oy = r ? r.top + r.height / 2 : 0;
+      const dpx = mx - pinchMidX;
+      const dpy = my - pinchMidY;
+      translateX += dpx;
+      translateY += dpy;
+      pinchMidX = mx;
+      pinchMidY = my;
+
       const rawD = Math.max(touchDistance(e.touches), 1);
       const dd = Math.abs(rawD - pinchLastRawD);
       pinchLastRawD = rawD;
       const alpha =
         dd < 0.75 ? 0.07 : dd < 2.5 ? 0.22 : dd < 10 ? 0.48 : 0.78;
       pinchDistFiltered = alpha * rawD + (1 - alpha) * pinchDistFiltered;
-      scale = Math.min(
+      const prevScale = scale;
+      const next = Math.min(
         SCALE_MAX,
         Math.max(
           SCALE_MIN,
           pinchScaleStart * (pinchDistFiltered / pinchDistStart),
         ),
       );
+      const k = next / prevScale;
+      if (el && Math.abs(k - 1) > 1e-6) {
+        const ox2 = ox + dpx;
+        const oy2 = oy + dpy;
+        translateX += (mx - ox2) * (1 - k);
+        translateY += (my - oy2) * (1 - k);
+      }
+      scale = next;
       return;
     }
 
@@ -293,18 +339,31 @@
 />
 
 {#if mode.kind === "typst"}
-  <SvgPreview
-    error={mode.error}
-    pages={mode.pages}
-    bind:currentPage
-    pageCount={mode.pageCount}
-    diagnostics={mode.diagnostics}
-    warnings={mode.warnings}
-    stalePreview={mode.stale}
-    bind:scale
-    bind:translateX
-    bind:translateY
-  />
+  <div
+    class="h-full w-full min-h-0 flex flex-col bg-[var(--app-surface)] overflow-hidden"
+    role="region"
+    aria-label="Typst preview"
+  >
+    <div
+      class="shrink-0 px-2 py-1.5 text-[10px] uppercase tracking-wider text-[var(--app-fg-muted)] border-b border-[var(--app-border)]"
+    >
+      Typst preview
+    </div>
+    <div class="flex-1 min-h-0 relative min-w-0 bg-[var(--app-bg)] checkerboard">
+      <SvgPreview
+        error={mode.error}
+        pages={mode.pages}
+        bind:currentPage
+        pageCount={mode.pageCount}
+        diagnostics={mode.diagnostics}
+        warnings={mode.warnings}
+        stalePreview={mode.stale}
+        bind:scale
+        bind:translateX
+        bind:translateY
+      />
+    </div>
+  </div>
 {:else if mode.kind === "image"}
   <div
     class="h-full w-full min-h-0 flex flex-col bg-[var(--app-surface)] overflow-hidden"

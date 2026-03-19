@@ -1,6 +1,7 @@
 use std::fs;
 use std::io::copy;
 use std::io::Cursor;
+use std::io::Write;
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -686,6 +687,167 @@ struct ExportTypstResponse {
     output_paths: Vec<String>,
 }
 
+/// iOS/iPadOS: export written under `Documents/typst-editor-export-staging/` (no leading `.` — glob
+/// scopes like `$DOCUMENT/**` often skip dot-segments) so the web layer can `readFile` then `writeFile`.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ExportTypstStageResponse {
+    warnings: Vec<CompileDiagnosticJson>,
+    staging_id: String,
+    file_names: Vec<String>,
+    /// When true, multiple pages were packed into one `.zip`; the save dialog should use a `.zip` default.
+    bundle_zip: bool,
+}
+
+const EXPORT_STAGING_ROOT: &str = "typst-editor-export-staging";
+
+fn new_export_staging_id() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    format!(
+        "e{}-{}",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0),
+        std::process::id()
+    )
+}
+
+fn validate_export_staging_id(id: &str) -> Result<(), String> {
+    if id.is_empty() || id.len() > 200 {
+        return Err("Invalid staging id.".into());
+    }
+    if id.contains("..") || id.contains('/') || id.contains('\\') {
+        return Err("Invalid staging id.".into());
+    }
+    Ok(())
+}
+
+fn create_export_staging_subdir(app: &tauri::AppHandle) -> Result<(PathBuf, String), String> {
+    let root = projects_data_root(app)?;
+    let id = new_export_staging_id();
+    let dir = root.join(EXPORT_STAGING_ROOT).join(&id);
+    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    Ok((dir, id))
+}
+
+#[cfg(target_os = "ios")]
+fn zip_named_entries(entries: &[(String, Vec<u8>)]) -> Result<Vec<u8>, String> {
+    let mut cursor = Cursor::new(Vec::new());
+    let mut zip = zip::ZipWriter::new(&mut cursor);
+    let options = zip::write::SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated);
+    for (name, data) in entries {
+        zip
+            .start_file(name, options)
+            .map_err(|e| e.to_string())?;
+        zip.write_all(data).map_err(|e| e.to_string())?;
+    }
+    zip.finish().map_err(|e| e.to_string())?;
+    Ok(cursor.into_inner())
+}
+
+fn export_typst_outputs(
+    app: &tauri::AppHandle,
+    content: String,
+    main_path: Option<String>,
+    output_path: &str,
+    export_kind: ExportTypstKind,
+) -> Result<(Vec<CompileDiagnosticJson>, Vec<(PathBuf, Vec<u8>)>), String> {
+    let package_cache = ensure_typst_package_cache(app);
+    let fonts = all_world_fonts(app);
+    let world = EditorWorld::new(content, main_path, package_cache, fonts);
+
+    match export_kind {
+        ExportTypstKind::Html => {
+            let warned = typst::compile::<HtmlDocument>(&world);
+            let warnings: Vec<_> = warned
+                .warnings
+                .iter()
+                .map(|w| diagnostic_to_json(&world, w))
+                .collect();
+            let document = match warned.output {
+                Ok(doc) => doc,
+                Err(errs) => return Err(compile_failure_message(&world, &errs)),
+            };
+            let html = typst_html_encode(&document).map_err(|errs| {
+                errs
+                    .iter()
+                    .map(|e| e.message.to_string())
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            })?;
+            let out = PathBuf::from(output_path);
+            Ok((warnings, vec![(out, html.into_bytes())]))
+        }
+        ExportTypstKind::Pdf {
+            pdf_profile,
+            tagged,
+        } => {
+            let warned = typst::compile::<PagedDocument>(&world);
+            let warnings: Vec<_> = warned
+                .warnings
+                .iter()
+                .map(|w| diagnostic_to_json(&world, w))
+                .collect();
+            let document = match warned.output {
+                Ok(doc) => doc,
+                Err(errs) => return Err(compile_failure_message(&world, &errs)),
+            };
+            let opts = build_pdf_options(&pdf_profile, tagged)?;
+            let bytes = pdf(&document, &opts).map_err(|errs| {
+                errs
+                    .iter()
+                    .map(|e| e.message.to_string())
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            })?;
+            let out = PathBuf::from(output_path);
+            Ok((warnings, vec![(out, bytes)]))
+        }
+        ExportTypstKind::Svg | ExportTypstKind::Png { .. } => {
+            let warned = typst::compile::<PagedDocument>(&world);
+            let warnings: Vec<_> = warned
+                .warnings
+                .iter()
+                .map(|w| diagnostic_to_json(&world, w))
+                .collect();
+            let document = match warned.output {
+                Ok(doc) => doc,
+                Err(errs) => return Err(compile_failure_message(&world, &errs)),
+            };
+            let page_count = document.pages.len();
+            if page_count == 0 {
+                return Err("Document has no pages to export.".into());
+            }
+            let out = PathBuf::from(output_path);
+            let ext = match &export_kind {
+                ExportTypstKind::Svg => "svg",
+                ExportTypstKind::Png { .. } => "png",
+                _ => unreachable!(),
+            };
+            let paths = export_paths_for_pages(&out, page_count, ext);
+            let mut pairs = Vec::with_capacity(page_count);
+            for (i, page) in document.pages.iter().enumerate() {
+                let path = &paths[i];
+                let bytes = match &export_kind {
+                    ExportTypstKind::Svg => {
+                        let svg = typst_svg::svg(page);
+                        svg.into_bytes()
+                    }
+                    ExportTypstKind::Png { ppi } => {
+                        let svg = typst_svg::svg(page);
+                        typst_svg_to_png_bytes(&svg, *ppi)?
+                    }
+                    _ => unreachable!(),
+                };
+                pairs.push((path.clone(), bytes));
+            }
+            Ok((warnings, pairs))
+        }
+    }
+}
+
 fn ensure_parent_dir(path: &Path) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         if !parent.as_os_str().is_empty() {
@@ -839,114 +1001,103 @@ fn export_typst(
     output_path: String,
     export_kind: ExportTypstKind,
 ) -> Result<ExportTypstResponse, String> {
-    let package_cache = ensure_typst_package_cache(&app);
-    let fonts = all_world_fonts(&app);
-    let world = EditorWorld::new(content, main_path, package_cache, fonts);
-
-    match export_kind {
-        ExportTypstKind::Html => {
-            let warned = typst::compile::<HtmlDocument>(&world);
-            let warnings: Vec<_> = warned
-                .warnings
-                .iter()
-                .map(|w| diagnostic_to_json(&world, w))
-                .collect();
-            let document = match warned.output {
-                Ok(doc) => doc,
-                Err(errs) => return Err(compile_failure_message(&world, &errs)),
-            };
-            let html = typst_html_encode(&document).map_err(|errs| {
-                errs
-                    .iter()
-                    .map(|e| e.message.to_string())
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            })?;
-            let out = PathBuf::from(&output_path);
-            ensure_parent_dir(&out)?;
-            fs::write(&out, html).map_err(|e| e.to_string())?;
-            Ok(ExportTypstResponse {
-                warnings,
-                output_paths: vec![output_path],
-            })
-        }
-        ExportTypstKind::Pdf {
-            pdf_profile,
-            tagged,
-        } => {
-            let warned = typst::compile::<PagedDocument>(&world);
-            let warnings: Vec<_> = warned
-                .warnings
-                .iter()
-                .map(|w| diagnostic_to_json(&world, w))
-                .collect();
-            let document = match warned.output {
-                Ok(doc) => doc,
-                Err(errs) => return Err(compile_failure_message(&world, &errs)),
-            };
-            let opts = build_pdf_options(&pdf_profile, tagged)?;
-            let bytes = pdf(&document, &opts).map_err(|errs| {
-                errs
-                    .iter()
-                    .map(|e| e.message.to_string())
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            })?;
-            let out = PathBuf::from(&output_path);
-            ensure_parent_dir(&out)?;
-            fs::write(&out, bytes).map_err(|e| e.to_string())?;
-            Ok(ExportTypstResponse {
-                warnings,
-                output_paths: vec![output_path],
-            })
-        }
-        ExportTypstKind::Svg | ExportTypstKind::Png { .. } => {
-            let warned = typst::compile::<PagedDocument>(&world);
-            let warnings: Vec<_> = warned
-                .warnings
-                .iter()
-                .map(|w| diagnostic_to_json(&world, w))
-                .collect();
-            let document = match warned.output {
-                Ok(doc) => doc,
-                Err(errs) => return Err(compile_failure_message(&world, &errs)),
-            };
-            let page_count = document.pages.len();
-            if page_count == 0 {
-                return Err("Document has no pages to export.".into());
-            }
-            let out = PathBuf::from(&output_path);
-            let ext = match &export_kind {
-                ExportTypstKind::Svg => "svg",
-                ExportTypstKind::Png { .. } => "png",
-                _ => unreachable!(),
-            };
-            let paths = export_paths_for_pages(&out, page_count, ext);
-            for (i, page) in document.pages.iter().enumerate() {
-                let path = &paths[i];
-                ensure_parent_dir(path)?;
-                match &export_kind {
-                    ExportTypstKind::Svg => {
-                        let svg = typst_svg::svg(page);
-                        fs::write(path, svg).map_err(|e| e.to_string())?;
-                    }
-                    ExportTypstKind::Png { ppi } => {
-                        let svg = typst_svg::svg(page);
-                        let png = typst_svg_to_png_bytes(&svg, *ppi)?;
-                        fs::write(path, png).map_err(|e| e.to_string())?;
-                    }
-                    _ => unreachable!(),
-                }
-            }
-            Ok(ExportTypstResponse {
-                warnings,
-                output_paths: paths
-                    .iter()
-                    .map(|p| p.to_string_lossy().into_owned())
-                    .collect(),
-            })
-        }
+    let (warnings, pairs) = export_typst_outputs(
+        &app,
+        content,
+        main_path,
+        output_path.trim(),
+        export_kind,
+    )?;
+    let mut output_paths = Vec::with_capacity(pairs.len());
+    for (path, bytes) in pairs {
+        ensure_parent_dir(&path)?;
+        fs::write(&path, bytes).map_err(|e| e.to_string())?;
+        output_paths.push(path.to_string_lossy().into_owned());
     }
+    Ok(ExportTypstResponse {
+        warnings,
+        output_paths,
+    })
+}
+
+/// Same as [`export_typst`], but writes into a short-lived directory under app Documents; the web layer
+/// reads with `plugin-fs` and writes to the security-scoped save URL (avoids huge IPC payloads).
+#[command]
+fn export_typst_stage(
+    app: tauri::AppHandle,
+    content: String,
+    main_path: Option<String>,
+    output_path: String,
+    export_kind: ExportTypstKind,
+) -> Result<ExportTypstStageResponse, String> {
+    let (warnings, pairs) = export_typst_outputs(
+        &app,
+        content,
+        main_path,
+        output_path.trim(),
+        export_kind,
+    )?;
+    #[cfg(target_os = "ios")]
+    let (pairs, bundle_zip) = {
+        let mut pairs = pairs;
+        let mut bundle_zip = false;
+        if pairs.len() > 1 {
+            let named: Vec<(String, Vec<u8>)> = pairs
+                .iter()
+                .map(|(p, b)| {
+                    let name = p
+                        .file_name()
+                        .map(|s| s.to_string_lossy().into_owned())
+                        .unwrap_or_else(|| "page".into());
+                    (name, b.clone())
+                })
+                .collect();
+            let zip_bytes = zip_named_entries(&named)?;
+            let out_for_stem = PathBuf::from(output_path.trim());
+            let stem = out_for_stem
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("export");
+            let zip_name = format!("{stem}.zip");
+            pairs = vec![(PathBuf::from(&zip_name), zip_bytes)];
+            bundle_zip = true;
+        }
+        (pairs, bundle_zip)
+    };
+    #[cfg(not(target_os = "ios"))]
+    let bundle_zip = false;
+
+    let (staging_dir, staging_id) = create_export_staging_subdir(&app)?;
+    let mut file_names = Vec::with_capacity(pairs.len());
+    for (path, data) in pairs {
+        let name = path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .ok_or("Invalid export file name.")?;
+        if name.contains('/') || name.contains('\\') {
+            return Err("Invalid export file name.".into());
+        }
+        let dest = staging_dir.join(name);
+        fs::write(&dest, data).map_err(|e| e.to_string())?;
+        file_names.push(name.to_string());
+    }
+    Ok(ExportTypstStageResponse {
+        warnings,
+        staging_id,
+        file_names,
+        bundle_zip,
+    })
+}
+
+#[command]
+fn export_typst_stage_cleanup(app: tauri::AppHandle, staging_id: String) -> Result<(), String> {
+    validate_export_staging_id(&staging_id)?;
+    let root = projects_data_root(&app)?;
+    let dir = root.join(EXPORT_STAGING_ROOT).join(staging_id.trim());
+    if dir.is_dir() {
+        fs::remove_dir_all(&dir).map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 
 #[derive(serde::Serialize)]
@@ -1238,6 +1389,42 @@ fn validate_ios_project_folder_id(id: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn zip_project_tree<W: Write + std::io::Seek>(
+    zip: &mut zip::ZipWriter<W>,
+    project_root: &Path,
+    dir: &Path,
+    options: zip::write::SimpleFileOptions,
+    skip_canonical_equal: Option<&Path>,
+) -> Result<(), String> {
+    for entry in fs::read_dir(dir).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let path = entry.path();
+        if path.is_dir() {
+            zip_project_tree(zip, project_root, &path, options, skip_canonical_equal)?;
+        } else if path.is_file() {
+            if let Some(skip) = skip_canonical_equal {
+                if let Ok(c) = fs::canonicalize(&path) {
+                    if c == *skip {
+                        continue;
+                    }
+                }
+            }
+            let rel = path
+                .strip_prefix(project_root)
+                .map_err(|e| e.to_string())?;
+            let name = rel.to_string_lossy().replace('\\', "/");
+            if name.is_empty() {
+                continue;
+            }
+            zip.start_file(name, options)
+                .map_err(|e| e.to_string())?;
+            let mut f = fs::File::open(&path).map_err(|e| e.to_string())?;
+            copy(&mut f, zip).map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(())
+}
+
 fn zip_project_directory(project_dir: &Path, output_path: &Path) -> Result<(), String> {
     let out_file = fs::File::create(output_path).map_err(|e| e.to_string())?;
     let mut zip = zip::ZipWriter::new(out_file);
@@ -1245,44 +1432,19 @@ fn zip_project_directory(project_dir: &Path, output_path: &Path) -> Result<(), S
         .compression_method(zip::CompressionMethod::Deflated);
 
     let out_canon = fs::canonicalize(output_path).map_err(|e| e.to_string())?;
-
-    fn add_dir(
-        zip: &mut zip::ZipWriter<fs::File>,
-        project_root: &Path,
-        dir: &Path,
-        options: zip::write::SimpleFileOptions,
-        out_canon: &Path,
-    ) -> Result<(), String> {
-        for entry in fs::read_dir(dir).map_err(|e| e.to_string())? {
-            let entry = entry.map_err(|e| e.to_string())?;
-            let path = entry.path();
-            if path.is_dir() {
-                add_dir(zip, project_root, &path, options, out_canon)?;
-            } else if path.is_file() {
-                if let Ok(c) = fs::canonicalize(&path) {
-                    if c == *out_canon {
-                        continue;
-                    }
-                }
-                let rel = path
-                    .strip_prefix(project_root)
-                    .map_err(|e| e.to_string())?;
-                let name = rel.to_string_lossy().replace('\\', "/");
-                if name.is_empty() {
-                    continue;
-                }
-                zip.start_file(name, options)
-                    .map_err(|e| e.to_string())?;
-                let mut f = fs::File::open(&path).map_err(|e| e.to_string())?;
-                std::io::copy(&mut f, zip).map_err(|e| e.to_string())?;
-            }
-        }
-        Ok(())
-    }
-
-    add_dir(&mut zip, project_dir, project_dir, options, &out_canon)?;
+    zip_project_tree(&mut zip, project_dir, project_dir, options, Some(&out_canon))?;
     zip.finish().map_err(|e| e.to_string())?;
     Ok(())
+}
+
+fn zip_project_directory_to_vec(project_dir: &Path) -> Result<Vec<u8>, String> {
+    let cursor = Cursor::new(Vec::new());
+    let mut zip = zip::ZipWriter::new(cursor);
+    let options = zip::write::SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated);
+    zip_project_tree(&mut zip, project_dir, project_dir, options, None)?;
+    let cursor = zip.finish().map_err(|e| e.to_string())?;
+    Ok(cursor.into_inner())
 }
 
 /// Zip all files under `Projects/<folderId>/`.
@@ -1303,6 +1465,30 @@ fn export_ios_project_zip(
         return Err("Invalid export path.".into());
     }
     zip_project_directory(&project, &out)
+}
+
+/// Same as [`export_ios_project_zip`], but writes the ZIP into export staging for `readFile` + `writeFile` on iOS.
+#[command]
+fn export_ios_project_zip_stage(
+    app: tauri::AppHandle,
+    folder_id: String,
+) -> Result<ExportTypstStageResponse, String> {
+    validate_ios_project_folder_id(&folder_id)?;
+    let root = projects_data_root(&app)?;
+    let project = root.join("Projects").join(&folder_id);
+    if !project.is_dir() {
+        return Err("Project folder not found.".into());
+    }
+    let bytes = zip_project_directory_to_vec(&project)?;
+    let (staging_dir, staging_id) = create_export_staging_subdir(&app)?;
+    let zip_name = "project.zip";
+    fs::write(staging_dir.join(zip_name), bytes).map_err(|e| e.to_string())?;
+    Ok(ExportTypstStageResponse {
+        warnings: vec![],
+        staging_id,
+        file_names: vec![zip_name.into()],
+        bundle_zip: false,
+    })
 }
 
 /// Folder name = title with only path-forbidden characters removed (spaces & casing kept).
@@ -2492,11 +2678,14 @@ pub fn run() {
             workspace_projects_use_document_dir,
             workspace_documents_dir,
             export_ios_project_zip,
+            export_ios_project_zip_stage,
             import_ios_project_from_folder,
             import_ios_project_from_zip,
             rename_ios_project,
             compile_typst,
             export_typst,
+            export_typst_stage,
+            export_typst_stage_cleanup,
             typst_engine_version,
             get_typst_package_cache_info,
             clear_typst_package_cache,

@@ -139,7 +139,8 @@
   }
 
   const SCALE_MIN = 0.25;
-  const SCALE_MAX = 6;
+  /** Match raster / SVG file preview zoom range in FilePreviewPane. */
+  const SCALE_MAX = 8;
   const ZOOM_DEBUG = false;
 
   let pinchActive = $state(false);
@@ -149,6 +150,9 @@
   let pinchDistFiltered = 1;
   let pinchLastRawD = 1;
   let pinchMoveLogCounter = 0;
+  /** Pinch midpoint (viewport px) — two-finger pan + zoom toward fingers */
+  let pinchMidX = 0;
+  let pinchMidY = 0;
 
   /** One-finger touch pan */
   let touchPanning = $state(false);
@@ -167,8 +171,13 @@
   let contentEl = $state<HTMLElement | null>(null);
   let viewportEl = $state<HTMLElement | null>(null);
 
-  /** Zoom in/out toward the center of the preview pane (like browser image zoom). */
-  function setScaleFromViewportCenter(nextScale: number, reason = "viewportCenter") {
+  /** Zoom toward a point in viewport coordinates (pane center, pinch center, etc.). */
+  function setScaleAtFocalPoint(
+    nextScale: number,
+    fx: number,
+    fy: number,
+    reason = "focal",
+  ) {
     const s = Math.min(SCALE_MAX, Math.max(SCALE_MIN, nextScale));
     const prevScale = scale;
     const prevTx = translateX;
@@ -179,25 +188,14 @@
       }
       return;
     }
-    const pane = viewportEl;
     const el = contentEl;
-    let fx = 0;
-    let fy = 0;
-    let ox = 0;
-    let oy = 0;
-    let k = 1;
-    if (pane && el) {
-      const pr = pane.getBoundingClientRect();
-      fx = pr.left + pr.width / 2;
-      fy = pr.top + pr.height / 2;
+    if (el) {
       const r = el.getBoundingClientRect();
-      ox = r.left + r.width / 2;
-      oy = r.top + r.height / 2;
-      k = s / prevScale;
-      const dtx = (fx - ox) * (1 - k);
-      const dty = (fy - oy) * (1 - k);
-      translateX += dtx;
-      translateY += dty;
+      const ox = r.left + r.width / 2;
+      const oy = r.top + r.height / 2;
+      const k = s / prevScale;
+      translateX += (fx - ox) * (1 - k);
+      translateY += (fy - oy) * (1 - k);
       if (ZOOM_DEBUG) {
         console.log("[SvgPreview zoom]", reason, {
           scale: { from: prevScale, to: s, k },
@@ -206,28 +204,33 @@
             to: [translateX, translateY],
             delta: [translateX - prevTx, translateY - prevTy],
           },
-          pane: { w: pr.width, h: pr.height, fx, fy },
-          content: {
-            w: r.width,
-            h: r.height,
-            ox,
-            oy,
-            // offset of content center from pane center (before pan delta)
-            offsetFromPaneCenter: [ox - fx, oy - fy],
-          },
+          focal: { fx, fy },
+          content: { w: r.width, h: r.height, ox, oy },
         });
       }
-    } else {
-      if (ZOOM_DEBUG) {
-        console.warn("[SvgPreview zoom] no pane/content rect — translate unchanged", {
-          reason,
-          hadPane: !!pane,
-          hadContent: !!el,
-          scale: { from: prevScale, to: s },
-        });
-      }
+    } else if (ZOOM_DEBUG) {
+      console.warn("[SvgPreview zoom] no content rect — translate unchanged", {
+        reason,
+        scale: { from: prevScale, to: s },
+      });
     }
     scale = s;
+  }
+
+  /** Zoom in/out toward the center of the preview pane (buttons, ctrl+wheel). */
+  function setScaleFromViewportCenter(nextScale: number, reason = "viewportCenter") {
+    const pane = viewportEl;
+    if (!pane) {
+      scale = Math.min(SCALE_MAX, Math.max(SCALE_MIN, nextScale));
+      return;
+    }
+    const pr = pane.getBoundingClientRect();
+    setScaleAtFocalPoint(
+      nextScale,
+      pr.left + pr.width / 2,
+      pr.top + pr.height / 2,
+      reason,
+    );
   }
 
   function touchById(t: TouchList, id: number): Touch | undefined {
@@ -250,6 +253,8 @@
       pinchDistFiltered = pinchDistStart;
       pinchLastRawD = pinchDistStart;
       pinchMoveLogCounter = 0;
+      pinchMidX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+      pinchMidY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
       if (ZOOM_DEBUG) {
         console.log("[SvgPreview pinch] start", {
           pinchScaleStart,
@@ -276,6 +281,22 @@
 
     if (e.touches.length >= 2 && pinchActive) {
       e.preventDefault();
+      const t0 = e.touches[0];
+      const t1 = e.touches[1];
+      const mx = (t0.clientX + t1.clientX) / 2;
+      const my = (t0.clientY + t1.clientY) / 2;
+
+      const el = contentEl;
+      const r = el?.getBoundingClientRect();
+      const ox = r ? r.left + r.width / 2 : 0;
+      const oy = r ? r.top + r.height / 2 : 0;
+      const dpx = mx - pinchMidX;
+      const dpy = my - pinchMidY;
+      translateX += dpx;
+      translateY += dpy;
+      pinchMidX = mx;
+      pinchMidY = my;
+
       const rawD = Math.max(touchDistance(e.touches), 1);
       const dd = Math.abs(rawD - pinchLastRawD);
       pinchLastRawD = rawD;
@@ -291,6 +312,13 @@
           pinchScaleStart * (pinchDistFiltered / pinchDistStart),
         ),
       );
+      const k = next / prevScale;
+      if (el && Math.abs(k - 1) > 1e-6) {
+        const ox2 = ox + dpx;
+        const oy2 = oy + dpy;
+        translateX += (mx - ox2) * (1 - k);
+        translateY += (my - oy2) * (1 - k);
+      }
       scale = next;
       pinchMoveLogCounter += 1;
       if (ZOOM_DEBUG && (pinchMoveLogCounter <= 3 || pinchMoveLogCounter % 6 === 0)) {
@@ -443,7 +471,7 @@
   onmouseup={stopPan}
 />
 
-<div class="h-full relative bg-[var(--preview-pane-bg)] flex flex-col min-h-0">
+<div class="h-full w-full min-h-0 relative flex flex-col">
   {#if error}
     <div
       class="shrink-0 flex items-start gap-2 px-3 py-2 bg-red-950/90 text-red-200 text-xs border-b border-red-800"
@@ -629,81 +657,91 @@
 
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div
-    class="flex-1 min-h-0 overflow-hidden relative {pages[currentPage]
+    class="flex-1 min-h-0 min-w-0 overflow-hidden relative {pages[currentPage]
       ? isPanning
         ? 'cursor-grabbing'
         : 'cursor-grab'
       : 'cursor-default'}"
-    onmousedown={startPan}
   >
     {#if pageCount > 0 && pages[currentPage]}
-      <div class="absolute bottom-6 right-6 flex flex-col gap-2 z-20">
+      <div
+        class="absolute top-2 right-2 z-20 flex flex-col items-end gap-1 pointer-events-auto"
+      >
         <div
-          class="flex items-center gap-1 bg-[var(--preview-floating-bg)] p-1 rounded-lg shadow-lg border border-[var(--preview-floating-border)] mb-2"
+          class="flex w-fit items-center gap-0.5 rounded-md shadow-lg border border-[var(--app-border)] bg-[var(--app-surface-elevated)] p-0.5"
         >
           <button
             type="button"
             onclick={prevPage}
             disabled={currentPage === 0}
-            class="p-1.5 hover:bg-[var(--preview-floating-hover)] disabled:opacity-30 disabled:hover:bg-transparent rounded-md transition-colors text-[var(--preview-floating-text)]"
+            class="inline-flex shrink-0 items-center justify-center rounded p-1 text-[var(--app-fg-secondary)] hover:bg-[var(--app-btn-ghost-hover)] disabled:opacity-30 disabled:hover:bg-transparent transition-colors"
             title="Previous Page"
           >
-            <ChevronLeft size={18} />
+            <ChevronLeft size={15} />
           </button>
-          <div class="px-2 text-xs font-bold text-[var(--preview-floating-text)] tabular-nums">
+          <div
+            class="px-1.5 text-[11px] font-bold tabular-nums text-[var(--app-fg-secondary)]"
+          >
             {pageCount > 0 ? currentPage + 1 : 0} / {pageCount}
           </div>
           <button
             type="button"
             onclick={nextPage}
             disabled={currentPage >= pageCount - 1}
-            class="p-1.5 hover:bg-[var(--preview-floating-hover)] disabled:opacity-30 disabled:hover:bg-transparent rounded-md transition-colors text-[var(--preview-floating-text)]"
+            class="inline-flex shrink-0 items-center justify-center rounded p-1 text-[var(--app-fg-secondary)] hover:bg-[var(--app-btn-ghost-hover)] disabled:opacity-30 disabled:hover:bg-transparent transition-colors"
             title="Next Page"
           >
-            <ChevronRight size={18} />
+            <ChevronRight size={15} />
           </button>
         </div>
 
-        <div class="flex flex-col gap-2 w-fit self-end">
+        <div class="flex w-fit flex-col gap-1">
           <button
             type="button"
             onclick={previewZoomIn}
-            class="p-2 bg-[var(--preview-floating-bg)] hover:opacity-95 text-[var(--preview-floating-text)] rounded-lg shadow-lg border border-[var(--preview-floating-border)] transition-all active:scale-95 group inline-flex items-center justify-center"
-            title="Zoom In"
+            class="inline-flex size-7 shrink-0 items-center justify-center rounded-md shadow-md border border-[var(--app-border)] bg-[var(--app-surface-elevated)] text-[var(--app-fg-secondary)] hover:bg-[var(--app-btn-ghost-hover)]"
+            title="Zoom in"
           >
-            <ZoomIn size={20} class="group-hover:text-blue-600" />
+            <ZoomIn size={14} />
           </button>
           <button
             type="button"
             onclick={previewZoomOut}
-            class="p-2 bg-[var(--preview-floating-bg)] hover:opacity-95 text-[var(--preview-floating-text)] rounded-lg shadow-lg border border-[var(--preview-floating-border)] transition-all active:scale-95 group inline-flex items-center justify-center"
-            title="Zoom Out"
+            class="inline-flex size-7 shrink-0 items-center justify-center rounded-md shadow-md border border-[var(--app-border)] bg-[var(--app-surface-elevated)] text-[var(--app-fg-secondary)] hover:bg-[var(--app-btn-ghost-hover)]"
+            title="Zoom out"
           >
-            <ZoomOut size={20} class="group-hover:text-blue-600" />
+            <ZoomOut size={14} />
           </button>
           <button
             type="button"
             onclick={resetPreviewZoom}
-            class="p-2 bg-[var(--preview-floating-bg)] hover:opacity-95 text-[var(--preview-floating-text)] rounded-lg shadow-lg border border-[var(--preview-floating-border)] transition-all active:scale-95 group inline-flex items-center justify-center"
-            title="Reset Zoom"
+            class="inline-flex size-7 shrink-0 items-center justify-center rounded-md shadow-md border border-[var(--app-border)] bg-[var(--app-surface-elevated)] text-[var(--app-fg-secondary)] hover:bg-[var(--app-btn-ghost-hover)]"
+            title="Reset zoom and pan"
           >
-            <RotateCcw size={20} class="group-hover:text-blue-600" />
+            <RotateCcw size={14} />
           </button>
         </div>
       </div>
 
+      <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
       <div
         bind:this={viewportEl}
-        class="w-full h-full flex flex-col items-center overflow-hidden p-12 min-h-0"
+        class="absolute inset-0 flex items-center justify-center overflow-hidden p-3 sm:p-4"
         style:touch-action="none"
         use:previewGestures
+        onmousedown={startPan}
+        role="application"
+        aria-label="Pinch or Ctrl+scroll to zoom; drag to pan"
+        tabindex="-1"
       >
         <div
           bind:this={contentEl}
           style:transform="translate3d({translateX}px, {translateY}px, 0) scale({scale})"
-          class="bg-white shadow-[0_0_50px_rgba(0,0,0,0.1)] rounded-sm min-w-[300px] shrink-0 origin-center will-change-transform transition-none [backface-visibility:hidden]"
+          class="flex h-full w-full origin-center items-center justify-center will-change-transform transition-none select-none [backface-visibility:hidden]"
         >
-          {@html pages[currentPage]}
+          <div class="typst-preview-graphic max-h-full max-w-full drop-shadow-md">
+            {@html pages[currentPage]}
+          </div>
         </div>
       </div>
     {:else}
@@ -721,3 +759,14 @@
     {/if}
   </div>
 </div>
+
+<style>
+  /* Match SVG-as-image preview: contain page in the padded viewport. */
+  .typst-preview-graphic :global(svg) {
+    display: block;
+    max-width: 100%;
+    max-height: 100%;
+    width: auto;
+    height: auto;
+  }
+</style>
