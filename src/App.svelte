@@ -25,8 +25,12 @@
     isTypstPath,
     isSvgSourcePath,
     isMarkdownPreviewPath,
+    isHtmlPreviewPath,
   } from "./lib/editorLanguage";
-  import { renderMarkdownToSafeHtml } from "./lib/markdownPreview";
+  import {
+    renderMarkdownToSafeHtml,
+    sanitizeHtmlForPreview,
+  } from "./lib/markdownPreview";
   import {
     createAssetPreviewUrl,
     revokeAssetPreviewUrl,
@@ -336,6 +340,7 @@
   let lastValidPages = $state<string[]>([]);
   let lastValidPageCount = $state(0);
   type CompileDiagnostic = {
+    severity?: "error" | "warning";
     file: string | null;
     line: number | null;
     column: number | null;
@@ -344,6 +349,7 @@
     trace: { message: string; line: number | null; column: number | null; file: string | null }[];
   };
   let compileDiagnostics = $state<CompileDiagnostic[]>([]);
+  let compileWarnings = $state<CompileDiagnostic[]>([]);
   let pdfExporting = $state(false);
 
   let previewPages = $derived(
@@ -367,6 +373,7 @@
     pages = [];
     pageCount = 0;
     compileDiagnostics = [];
+    compileWarnings = [];
   });
   const SPLIT_RATIO_KEY = "typst-editor-editor-preview-ratio";
   /** Minimum pane widths; above that, editor and preview share extra space by flex ratio (default 50/50). */
@@ -516,6 +523,12 @@
         html: renderMarkdownToSafeHtml(content),
       };
     }
+    if (isHtmlPreviewPath(path)) {
+      return {
+        kind: "html" as const,
+        html: sanitizeHtmlForPreview(content),
+      };
+    }
     if (isTypstPath(path)) {
       return {
         kind: "typst" as const,
@@ -523,12 +536,13 @@
         pages: previewPages,
         pageCount: previewPageCount,
         diagnostics: compileDiagnostics,
+        warnings: compileWarnings,
         stale: showingStalePreview,
       };
     }
     return {
       kind: "none" as const,
-      hint: "Live preview: Typst for .typ, Markdown for .md. Use PNG, JPEG, WebP, GIF, SVG, or PDF for assets.",
+      hint: "Live preview: Typst for .typ, Markdown for .md, HTML for .html/.htm. Use PNG, JPEG, WebP, GIF, SVG, or PDF for assets.",
     };
   });
 
@@ -1159,11 +1173,13 @@
         pages: string[];
         pageCount: number;
         diagnostics: CompileDiagnostic[];
+        warnings: CompileDiagnostic[];
       }>("compile_typst", {
         content: text,
         mainPath: pathSnapshot ?? null,
       });
       if (currentFilePath !== pathSnapshot || content !== text) return;
+      compileWarnings = result.warnings ?? [];
       if (result.success) {
         pages = result.pages;
         pageCount = result.pageCount;
@@ -1180,8 +1196,10 @@
       }
     } catch (err) {
       if (currentFilePath !== pathSnapshot || content !== text) return;
+      compileWarnings = [];
       compileDiagnostics = [
         {
+          severity: "error",
           message: String(err),
           file: null,
           line: null,
@@ -1205,15 +1223,27 @@
         filters: [{ name: "PDF", extensions: ["pdf"] }],
       });
       if (path === null) return;
-      await invoke("export_typst_pdf", {
-        content,
-        mainPath: currentFilePath ?? null,
-        outputPath: path,
-      });
-      await message(`PDF saved successfully.`, {
-        title: "Export PDF",
-        kind: "info",
-      });
+      const exportResult = await invoke<{ warnings: CompileDiagnostic[] }>(
+        "export_typst_pdf",
+        {
+          content,
+          mainPath: currentFilePath ?? null,
+          outputPath: path,
+        },
+      );
+      const w = exportResult?.warnings ?? [];
+      if (w.length > 0) {
+        const detail = w.map((d) => d.message).join("\n");
+        await message(
+          `PDF saved successfully.\n\nCompiler warnings (${w.length}):\n${detail}\n\nTip: this app does not load system fonts for Typst — import fonts in Settings → Typst fonts (or ship them in resources/fonts/bundled).`,
+          { title: "Export PDF", kind: "info" },
+        );
+      } else {
+        await message(`PDF saved successfully.`, {
+          title: "Export PDF",
+          kind: "info",
+        });
+      }
     } catch (e) {
       await message(String(e), {
         title: "PDF export failed",
@@ -1717,6 +1747,7 @@
       void refreshTypstFontFaces();
     }}
     initialTab={settingsInitialTab}
+    onFontsChanged={() => void refreshTypstFontFaces()}
   />
 
   {#if saveAsModalOpen}

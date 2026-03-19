@@ -1,5 +1,6 @@
 use std::fs;
 use std::io::copy;
+use std::io::Cursor;
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -13,14 +14,16 @@ use tauri::Manager;
 // `set_menu` / `on_menu_event`; use web shortcuts + in-app UI on iPad for the same actions.
 #[cfg(desktop)]
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
-use typst::diag::{FileError, FileResult, SourceDiagnostic};
-use typst::foundations::{Bytes, Datetime};
+use typst::diag::{FileError, FileResult, Severity, SourceDiagnostic};
+use typst::foundations::{Bytes, Datetime, Feature, Smart};
 use typst::layout::PagedDocument;
 use typst::syntax::{FileId, Source, Span, VirtualPath};
 use typst::text::{Font, FontBook};
 use typst::utils::LazyHash;
 use typst::{Library, LibraryExt, World, WorldExt};
-use typst_pdf::{pdf, PdfOptions};
+use typst_html::HtmlDocument;
+use typst_html::html as typst_html_encode;
+use typst_pdf::{pdf, PdfOptions, PdfStandard, PdfStandards};
 use typst_kit::download::{Downloader, ProgressSink};
 use typst_kit::package::PackageStorage;
 
@@ -386,7 +389,11 @@ impl EditorWorld {
         );
 
         Self {
-            library: LazyHash::new(Library::default()),
+            library: LazyHash::new(
+                Library::builder()
+                    .with_features(std::iter::once(Feature::Html).collect())
+                    .build(),
+            ),
             book: LazyHash::new(FontBook::from_fonts(&fonts)),
             fonts,
             main_source,
@@ -472,6 +479,8 @@ struct CompileTraceEntry {
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct CompileDiagnosticJson {
+    /// `"error"` or `"warning"` (Typst compile diagnostics).
+    severity: String,
     file: Option<String>,
     line: Option<u32>,
     column: Option<u32>,
@@ -487,6 +496,8 @@ struct CompileResponse {
     pages: Vec<String>,
     page_count: usize,
     diagnostics: Vec<CompileDiagnosticJson>,
+    /// Non-fatal Typst warnings (e.g. unknown font family, variable fonts).
+    warnings: Vec<CompileDiagnosticJson>,
 }
 
 fn span_location(world: &EditorWorld, span: Span) -> (Option<String>, Option<u32>, Option<u32>) {
@@ -518,6 +529,13 @@ fn span_location(world: &EditorWorld, span: Span) -> (Option<String>, Option<u32
     )
 }
 
+fn diagnostic_severity_str(s: Severity) -> &'static str {
+    match s {
+        Severity::Error => "error",
+        Severity::Warning => "warning",
+    }
+}
+
 fn diagnostic_to_json(world: &EditorWorld, d: &SourceDiagnostic) -> CompileDiagnosticJson {
     let (file, line, column) = span_location(world, d.span);
     let hints: Vec<String> = d.hints.iter().map(|h| h.to_string()).collect();
@@ -535,6 +553,7 @@ fn diagnostic_to_json(world: &EditorWorld, d: &SourceDiagnostic) -> CompileDiagn
         })
         .collect();
     CompileDiagnosticJson {
+        severity: diagnostic_severity_str(d.severity).to_string(),
         file,
         line,
         column,
@@ -545,6 +564,7 @@ fn diagnostic_to_json(world: &EditorWorld, d: &SourceDiagnostic) -> CompileDiagn
 }
 
 /// Rich compile result: on failure, `diagnostics` is filled; `pages` stay empty.
+/// On success or failure, `warnings` contains Typst compiler warnings (e.g. unknown font family).
 /// `main_path`: absolute path to the saved `.typ` file when known; enables local imports
 /// and image paths. Online `@preview/...` packages work with or without `main_path`.
 #[command]
@@ -553,6 +573,11 @@ fn compile_typst(app: tauri::AppHandle, content: String, main_path: Option<Strin
     let fonts = all_world_fonts(&app);
     let world = EditorWorld::new(content, main_path, package_cache, fonts);
     let warned = typst::compile::<PagedDocument>(&world);
+    let warnings: Vec<_> = warned
+        .warnings
+        .iter()
+        .map(|w| diagnostic_to_json(&world, w))
+        .collect();
     match warned.output {
         Ok(document) => {
             let pages: Vec<String> = document
@@ -566,6 +591,7 @@ fn compile_typst(app: tauri::AppHandle, content: String, main_path: Option<Strin
                 pages,
                 page_count,
                 diagnostics: vec![],
+                warnings,
             }
         }
         Err(errs) => {
@@ -578,53 +604,300 @@ fn compile_typst(app: tauri::AppHandle, content: String, main_path: Option<Strin
                 pages: vec![],
                 page_count: 0,
                 diagnostics,
+                warnings,
             }
         }
     }
 }
 
-/// Compile current document to PDF and write bytes to `output_path`.
-#[command]
-fn export_typst_pdf(
-    app: tauri::AppHandle,
-    content: String,
-    main_path: Option<String>,
-    output_path: String,
-) -> Result<(), String> {
-    let package_cache = ensure_typst_package_cache(&app);
-    let fonts = all_world_fonts(&app);
-    let world = EditorWorld::new(content, main_path, package_cache, fonts);
-    let warned = typst::compile::<PagedDocument>(&world);
-    let document = match warned.output {
-        Ok(doc) => doc,
-        Err(errs) => {
-            let msg = errs
-                .iter()
-                .map(|e| diagnostic_to_json(&world, e).message)
-                .collect::<Vec<_>>()
-                .join("\n");
-            return Err(if msg.is_empty() {
-                "Compilation failed.".into()
-            } else {
-                msg
-            });
-        }
-    };
-    let bytes = pdf(&document, &PdfOptions::default()).map_err(|errs| {
-        errs
-            .iter()
-            .map(|e| e.message.to_string())
-            .collect::<Vec<_>>()
-            .join("\n")
-    })?;
-    let out = PathBuf::from(output_path);
-    if let Some(parent) = out.parent() {
+#[derive(Debug, serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum ExportTypstKind {
+    Pdf {
+        pdf_profile: String,
+        #[serde(default = "default_export_tagged")]
+        tagged: bool,
+    },
+    Svg,
+    Png {
+        ppi: f64,
+    },
+    Html,
+}
+
+fn default_export_tagged() -> bool {
+    true
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ExportTypstResponse {
+    warnings: Vec<CompileDiagnosticJson>,
+    output_paths: Vec<String>,
+}
+
+fn ensure_parent_dir(path: &Path) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
         if !parent.as_os_str().is_empty() {
             fs::create_dir_all(parent).map_err(|e| e.to_string())?;
         }
     }
-    fs::write(&out, bytes).map_err(|e| e.to_string())?;
     Ok(())
+}
+
+fn export_paths_for_pages(out: &Path, page_count: usize, ext: &str) -> Vec<PathBuf> {
+    if page_count <= 1 {
+        return vec![out.with_extension(ext)];
+    }
+    let stem = out
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("export");
+    let parent = out.parent();
+    (1..=page_count)
+        .map(|i| {
+            let name = format!("{stem}-p{i}.{ext}");
+            parent
+                .map(|p| p.join(&name))
+                .unwrap_or_else(|| PathBuf::from(name))
+        })
+        .collect()
+}
+
+fn pdf_standards_for_profile(profile: &str) -> Result<PdfStandards, String> {
+    match profile {
+        "1.4" => PdfStandards::new(&[PdfStandard::V_1_4]),
+        "1.5" => PdfStandards::new(&[PdfStandard::V_1_5]),
+        "1.6" => PdfStandards::new(&[PdfStandard::V_1_6]),
+        "1.7" | "default" => Ok(PdfStandards::default()),
+        "2.0" => PdfStandards::new(&[PdfStandard::V_2_0]),
+        "a-1b" => PdfStandards::new(&[PdfStandard::A_1b]),
+        "a-1a" => PdfStandards::new(&[PdfStandard::A_1a]),
+        "a-2b" => PdfStandards::new(&[PdfStandard::A_2b]),
+        "a-2u" => PdfStandards::new(&[PdfStandard::A_2u]),
+        "a-2a" => PdfStandards::new(&[PdfStandard::A_2a]),
+        "a-3b" => PdfStandards::new(&[PdfStandard::A_3b]),
+        "a-3u" => PdfStandards::new(&[PdfStandard::A_3u]),
+        "a-3a" => PdfStandards::new(&[PdfStandard::A_3a]),
+        "a-4" => PdfStandards::new(&[PdfStandard::A_4]),
+        "a-4f" => PdfStandards::new(&[PdfStandard::A_4f]),
+        "a-4e" => PdfStandards::new(&[PdfStandard::A_4e]),
+        "ua-1" => PdfStandards::new(&[PdfStandard::Ua_1]),
+        _ => Err(format!("Unknown PDF profile: {profile}")),
+    }
+    .map_err(|e| e.into())
+}
+
+fn build_pdf_options(profile: &str, tagged_arg: bool) -> Result<PdfOptions<'static>, String> {
+    let (profile_key, mut tagged) = if profile == "1.7-untagged" {
+        ("1.7", false)
+    } else {
+        (profile, tagged_arg)
+    };
+    if profile_key == "ua-1" {
+        tagged = true;
+    }
+    let standards = pdf_standards_for_profile(profile_key)?;
+    Ok(PdfOptions {
+        ident: Smart::Auto,
+        timestamp: None,
+        page_ranges: None,
+        standards,
+        tagged,
+    })
+}
+
+fn unpremultiply_rgba(data: &[u8]) -> Vec<u8> {
+    let mut out = data.to_vec();
+    for px in out.chunks_exact_mut(4) {
+        let a = px[3] as u32;
+        if a == 0 {
+            px[0] = 0;
+            px[1] = 0;
+            px[2] = 0;
+            continue;
+        }
+        for i in 0..3 {
+            px[i] = ((px[i] as u32 * 255 + a / 2) / a).min(255) as u8;
+        }
+    }
+    out
+}
+
+fn pixmap_to_png(pixmap: &resvg::tiny_skia::Pixmap) -> Result<Vec<u8>, String> {
+    let width = pixmap.width();
+    let height = pixmap.height();
+    let rgba = unpremultiply_rgba(pixmap.data());
+    let mut out = Vec::new();
+    {
+        let mut enc = png::Encoder::new(Cursor::new(&mut out), width, height);
+        enc.set_color(png::ColorType::Rgba);
+        enc.set_depth(png::BitDepth::Eight);
+        let mut writer = enc.write_header().map_err(|e| e.to_string())?;
+        writer.write_image_data(&rgba).map_err(|e| e.to_string())?;
+    }
+    Ok(out)
+}
+
+fn typst_svg_to_png_bytes(svg: &str, ppi: f64) -> Result<Vec<u8>, String> {
+    const MAX_EDGE_PX: u32 = 16_384;
+    if !(ppi.is_finite() && ppi > 0.0) {
+        return Err("PPI must be a positive finite number.".into());
+    }
+    let mut opt = resvg::usvg::Options::default();
+    opt.fontdb_mut().load_system_fonts();
+    let tree = resvg::usvg::Tree::from_str(svg, &opt).map_err(|e| e.to_string())?;
+    let size = tree.size();
+    let w_pt = size.width();
+    let h_pt = size.height();
+    let scale = ppi as f32 / 72.0;
+    let w_px = ((w_pt * scale).ceil() as u32).max(1);
+    let h_px = ((h_pt * scale).ceil() as u32).max(1);
+    if w_px > MAX_EDGE_PX || h_px > MAX_EDGE_PX {
+        return Err(format!(
+            "PNG export size too large ({w_px}×{h_px} px at this PPI). Lower PPI or shrink the page.",
+        ));
+    }
+    let mut pixmap = resvg::tiny_skia::Pixmap::new(w_px, h_px)
+        .ok_or_else(|| "Could not allocate image buffer.".to_string())?;
+    let transform = resvg::tiny_skia::Transform::from_scale(
+        w_px as f32 / w_pt,
+        h_px as f32 / h_pt,
+    );
+    resvg::render(&tree, transform, &mut pixmap.as_mut());
+    pixmap_to_png(&pixmap)
+}
+
+fn compile_failure_message(world: &EditorWorld, errs: &[SourceDiagnostic]) -> String {
+    let msg = errs
+        .iter()
+        .map(|e| diagnostic_to_json(world, e).message)
+        .collect::<Vec<_>>()
+        .join("\n");
+    if msg.is_empty() {
+        "Compilation failed.".into()
+    } else {
+        msg
+    }
+}
+
+/// Export the current Typst document to PDF (several standards), multi-page SVG/PNG, or HTML.
+#[command]
+fn export_typst(
+    app: tauri::AppHandle,
+    content: String,
+    main_path: Option<String>,
+    output_path: String,
+    export_kind: ExportTypstKind,
+) -> Result<ExportTypstResponse, String> {
+    let package_cache = ensure_typst_package_cache(&app);
+    let fonts = all_world_fonts(&app);
+    let world = EditorWorld::new(content, main_path, package_cache, fonts);
+
+    match export_kind {
+        ExportTypstKind::Html => {
+            let warned = typst::compile::<HtmlDocument>(&world);
+            let warnings: Vec<_> = warned
+                .warnings
+                .iter()
+                .map(|w| diagnostic_to_json(&world, w))
+                .collect();
+            let document = match warned.output {
+                Ok(doc) => doc,
+                Err(errs) => return Err(compile_failure_message(&world, &errs)),
+            };
+            let html = typst_html_encode(&document).map_err(|errs| {
+                errs
+                    .iter()
+                    .map(|e| e.message.to_string())
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            })?;
+            let out = PathBuf::from(&output_path);
+            ensure_parent_dir(&out)?;
+            fs::write(&out, html).map_err(|e| e.to_string())?;
+            Ok(ExportTypstResponse {
+                warnings,
+                output_paths: vec![output_path],
+            })
+        }
+        ExportTypstKind::Pdf {
+            pdf_profile,
+            tagged,
+        } => {
+            let warned = typst::compile::<PagedDocument>(&world);
+            let warnings: Vec<_> = warned
+                .warnings
+                .iter()
+                .map(|w| diagnostic_to_json(&world, w))
+                .collect();
+            let document = match warned.output {
+                Ok(doc) => doc,
+                Err(errs) => return Err(compile_failure_message(&world, &errs)),
+            };
+            let opts = build_pdf_options(&pdf_profile, tagged)?;
+            let bytes = pdf(&document, &opts).map_err(|errs| {
+                errs
+                    .iter()
+                    .map(|e| e.message.to_string())
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            })?;
+            let out = PathBuf::from(&output_path);
+            ensure_parent_dir(&out)?;
+            fs::write(&out, bytes).map_err(|e| e.to_string())?;
+            Ok(ExportTypstResponse {
+                warnings,
+                output_paths: vec![output_path],
+            })
+        }
+        ExportTypstKind::Svg | ExportTypstKind::Png { .. } => {
+            let warned = typst::compile::<PagedDocument>(&world);
+            let warnings: Vec<_> = warned
+                .warnings
+                .iter()
+                .map(|w| diagnostic_to_json(&world, w))
+                .collect();
+            let document = match warned.output {
+                Ok(doc) => doc,
+                Err(errs) => return Err(compile_failure_message(&world, &errs)),
+            };
+            let page_count = document.pages.len();
+            if page_count == 0 {
+                return Err("Document has no pages to export.".into());
+            }
+            let out = PathBuf::from(&output_path);
+            let ext = match &export_kind {
+                ExportTypstKind::Svg => "svg",
+                ExportTypstKind::Png { .. } => "png",
+                _ => unreachable!(),
+            };
+            let paths = export_paths_for_pages(&out, page_count, ext);
+            for (i, page) in document.pages.iter().enumerate() {
+                let path = &paths[i];
+                ensure_parent_dir(path)?;
+                match &export_kind {
+                    ExportTypstKind::Svg => {
+                        let svg = typst_svg::svg(page);
+                        fs::write(path, svg).map_err(|e| e.to_string())?;
+                    }
+                    ExportTypstKind::Png { ppi } => {
+                        let svg = typst_svg::svg(page);
+                        let png = typst_svg_to_png_bytes(&svg, *ppi)?;
+                        fs::write(path, png).map_err(|e| e.to_string())?;
+                    }
+                    _ => unreachable!(),
+                }
+            }
+            Ok(ExportTypstResponse {
+                warnings,
+                output_paths: paths
+                    .iter()
+                    .map(|p| p.to_string_lossy().into_owned())
+                    .collect(),
+            })
+        }
+    }
 }
 
 #[derive(serde::Serialize)]
@@ -788,7 +1061,8 @@ fn remove_typst_imported_font(app: tauri::AppHandle, path: String) -> Result<Typ
     if !canon.starts_with(&import_canon) {
         return Err("path is not under the app font import folder".into());
     }
-    let _ = fs::remove_file(&canon);
+    // Update config *before* deleting the file: after remove_file, canonicalize(path) fails and
+    // retain(..., unwrap_or(true)) would keep the stale entry.
     let mut config = load_typst_font_config(&app);
     config.files.retain(|f| {
         fs::canonicalize(f)
@@ -796,6 +1070,7 @@ fn remove_typst_imported_font(app: tauri::AppHandle, path: String) -> Result<Typ
             .unwrap_or(true)
     });
     save_typst_font_config(&app, &config)?;
+    let _ = fs::remove_file(&canon);
     Ok(config)
 }
 
@@ -1651,7 +1926,12 @@ fn desktop_fs_read_text_file(path: String) -> Result<String, String> {
             return Err("Invalid path.".into());
         }
         let pb = PathBuf::from(path.trim());
-        fs::read_to_string(&pb).map_err(|e| e.to_string())
+        // Match `@tauri-apps/plugin-fs` readTextFile: decode as UTF-8 with replacement
+        // (`TextDecoder`), not `read_to_string` (strict UTF-8). macOS “Plain Text” from
+        // TextEdit and some tools save as UTF-16 or other encodings, which would otherwise
+        // error with "stream did not contain valid UTF-8".
+        let bytes = fs::read(&pb).map_err(|e| e.to_string())?;
+        Ok(String::from_utf8_lossy(&bytes).into_owned())
     }
     #[cfg(not(desktop))]
     {
@@ -1983,7 +2263,7 @@ pub fn run() {
             )?;
             let save_file = MenuItem::with_id(handle, "file-save", "Save", true, Some("CmdOrCtrl+S"))?;
             let save_as = MenuItem::with_id(handle, "file-save-as", "Save As...", true, Some("CmdOrCtrl+Shift+S"))?;
-            let export_pdf = MenuItem::with_id(handle, "file-export-pdf", "Export PDF…", true, Some("CmdOrCtrl+Shift+E"))?;
+            let export_typst = MenuItem::with_id(handle, "file-export-typst", "Export…", true, Some("CmdOrCtrl+Shift+E"))?;
 
             let file_menu = Submenu::with_items(
                 handle,
@@ -1998,7 +2278,7 @@ pub fn run() {
                     &save_file,
                     &save_as,
                     &PredefinedMenuItem::separator(handle)?,
-                    &export_pdf,
+                    &export_typst,
                 ],
             )?;
 
@@ -2109,7 +2389,7 @@ pub fn run() {
             import_ios_project_from_zip,
             rename_ios_project,
             compile_typst,
-            export_typst_pdf,
+            export_typst,
             typst_engine_version,
             get_typst_package_cache_info,
             clear_typst_package_cache,

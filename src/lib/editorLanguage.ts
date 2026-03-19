@@ -19,6 +19,7 @@ export function monacoLanguageIdFromPath(filePath: string): string {
     atom: "xml",
     html: "html",
     htm: "html",
+    xhtml: "html",
     css: "css",
     scss: "scss",
     less: "less",
@@ -119,5 +120,15 @@ export function isMarkdownPreviewPath(filePath: string): boolean {
     lower.endsWith(".md") ||
     lower.endsWith(".markdown") ||
     lower.endsWith(".mdwn")
+  );
+}
+
+/** `.html` / `.htm` / `.xhtml` — Monaco uses built-in HTML highlighting; preview is sanitized. */
+export function isHtmlPreviewPath(filePath: string): boolean {
+  const lower = filePath.toLowerCase();
+  return (
+    lower.endsWith(".html") ||
+    lower.endsWith(".htm") ||
+    lower.endsWith(".xhtml")
   );
 }

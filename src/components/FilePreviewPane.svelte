@@ -3,6 +3,7 @@
   import SvgPreview from "./SvgPreview.svelte";
 
   type CompileDiagnostic = {
+    severity?: "error" | "warning";
     file: string | null;
     line: number | null;
     column: number | null;
@@ -17,11 +18,20 @@
   };
 
   type PreviewMode =
-    | { kind: "typst"; error: string; pages: string[]; pageCount: number; diagnostics: CompileDiagnostic[]; stale: boolean }
+    | {
+        kind: "typst";
+        error: string;
+        pages: string[];
+        pageCount: number;
+        diagnostics: CompileDiagnostic[];
+        warnings: CompileDiagnostic[];
+        stale: boolean;
+      }
     | { kind: "image"; url: string; label: string }
     | { kind: "pdf"; url: string }
     | { kind: "svg-inline"; svg: string }
     | { kind: "markdown"; html: string }
+    | { kind: "html"; html: string }
     | { kind: "none"; hint: string };
 
   let {
@@ -289,6 +299,7 @@
     bind:currentPage
     pageCount={mode.pageCount}
     diagnostics={mode.diagnostics}
+    warnings={mode.warnings}
     stalePreview={mode.stale}
     bind:scale
     bind:translateX
@@ -389,6 +400,23 @@
       class="shrink-0 px-2 py-1.5 text-[10px] uppercase tracking-wider text-[var(--app-fg-muted)] border-b border-[var(--app-border)]"
     >
       Markdown preview
+    </div>
+    <div
+      class="md-preview flex-1 min-h-0 overflow-auto px-4 py-3 text-[var(--app-fg)] text-sm leading-relaxed bg-[var(--app-bg)]"
+    >
+      {@html mode.html}
+    </div>
+  </div>
+{:else if mode.kind === "html"}
+  <div
+    class="h-full w-full min-h-0 flex flex-col bg-[var(--app-surface)] overflow-hidden"
+    role="region"
+    aria-label="HTML preview"
+  >
+    <div
+      class="shrink-0 px-2 py-1.5 text-[10px] uppercase tracking-wider text-[var(--app-fg-muted)] border-b border-[var(--app-border)]"
+    >
+      HTML preview
     </div>
     <div
       class="md-preview flex-1 min-h-0 overflow-auto px-4 py-3 text-[var(--app-fg)] text-sm leading-relaxed bg-[var(--app-bg)]"

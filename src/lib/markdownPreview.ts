@@ -18,3 +18,8 @@ export function renderMarkdownToSafeHtml(source: string): string {
   const raw = marked.parse(source, { async: false }) as string;
   return DOMPurify.sanitize(raw, { USE_PROFILES: { html: true } });
 }
+
+/** Sanitize user HTML for live preview (same policy as Markdown: scripts removed). */
+export function sanitizeHtmlForPreview(source: string): string {
+  return DOMPurify.sanitize(source, { USE_PROFILES: { html: true } });
+}

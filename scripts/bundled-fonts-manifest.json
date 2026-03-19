@@ -1,0 +1,197 @@
+{
+  "comment": "Used by scripts/download-bundled-fonts.mjs. Run: npm run fonts:download",
+  "googleWebfontsHelperIds": [
+    "allura",
+    "atkinson-hyperlegible",
+    "atkinson-hyperlegible-mono",
+    "atkinson-hyperlegible-next",
+    "atma",
+    "barlow",
+    "buenard",
+    "cantarell",
+    "cascadia-code",
+    "cascadia-mono",
+    "clicker-script",
+    "crimson-pro",
+    "dm-mono",
+    "dm-sans",
+    "dm-serif-display",
+    "dm-serif-text",
+    "eb-garamond",
+    "exo-2",
+    "fira-code",
+    "fira-mono",
+    "fira-sans",
+    "gfs-neohellenic",
+    "ibm-plex-mono",
+    "ibm-plex-sans",
+    "ibm-plex-serif",
+    "inconsolata",
+    "inria-sans",
+    "inria-serif",
+    "inter",
+    "lato",
+    "libre-barcode-128",
+    "libre-barcode-128-text",
+    "libre-baskerville",
+    "lora",
+    "manrope",
+    "merriweather",
+    "merriweather-sans",
+    "noto-color-emoji",
+    "noto-emoji",
+    "noto-sans",
+    "noto-sans-display",
+    "noto-serif",
+    "noto-serif-display",
+    "permanent-marker",
+    "pt-mono",
+    "pt-sans",
+    "pt-sans-caption",
+    "pt-serif",
+    "public-sans",
+    "roboto",
+    "roboto-mono",
+    "roboto-serif",
+    "roboto-slab",
+    "source-code-pro",
+    "spectral",
+    "syne",
+    "syne-mono",
+    "syne-tactile",
+    "vollkorn"
+  ],
+  "archives": [
+    {
+      "id": "dejavu",
+      "url": "https://downloads.sourceforge.net/project/dejavu/dejavu/2.37/dejavu-fonts-ttf-2.37.zip",
+      "format": "zip"
+    },
+    {
+      "id": "dejavu-math-tex-gyre",
+      "url": "https://mirror.ctan.org/fonts/tex-gyre-math.zip",
+      "format": "zip"
+    },
+    {
+      "id": "tex-gyre",
+      "url": "https://mirror.ctan.org/fonts/tex-gyre.zip",
+      "format": "zip"
+    },
+    {
+      "id": "linux-libertine",
+      "url": "https://downloads.sourceforge.net/project/linuxlibertine/linuxlibertine/5.3.0/LinLibertineOTF_5.3.0_2012_07_02.tgz",
+      "format": "tgz"
+    },
+    {
+      "id": "new-computer-modern",
+      "url": "https://mirror.ctan.org/fonts/newcomputermodern.zip",
+      "format": "zip"
+    },
+    {
+      "id": "stix-two",
+      "url": "https://mirror.ctan.org/fonts/stix2-otf.zip",
+      "format": "zip"
+    },
+    {
+      "id": "liberation",
+      "url": "https://github.com/liberationfonts/liberation-fonts/files/7261482/liberation-fonts-ttf-2.1.5.tar.gz",
+      "format": "tar.gz"
+    },
+    {
+      "id": "comic-neue",
+      "url": "https://github.com/crozynski/comicneue/releases/download/2.51/comicneue-master.zip",
+      "format": "zip"
+    },
+    {
+      "id": "open-sauce-one",
+      "url": "https://github.com/marcologous/Open-Sauce-Fonts/archive/refs/heads/master.zip",
+      "format": "zip",
+      "pathFilter": "OpenSauceOne-",
+      "pathSuffixes": [".ttf", ".otf"]
+    },
+    {
+      "id": "opendyslexic",
+      "url": "https://github.com/antijingoist/opendyslexic/releases/download/v0.91.12/opendyslexic-0.910.12-rc2-2019.10.17.zip",
+      "format": "zip"
+    },
+    {
+      "id": "fantasque-sans-mono",
+      "url": "https://github.com/belluzj/fantasque-sans/releases/download/v1.8.0/FantasqueSansMono-Normal.zip",
+      "format": "zip"
+    },
+    {
+      "id": "firamath",
+      "url": "https://mirror.ctan.org/fonts/firamath.zip",
+      "format": "zip"
+    },
+    {
+      "id": "letesansmath",
+      "url": "https://mirror.ctan.org/fonts/lete-sans-math.zip",
+      "format": "zip"
+    },
+    {
+      "id": "libertinus",
+      "url": "https://github.com/alerque/libertinus/releases/download/v7.051/Libertinus-7.051.zip",
+      "format": "zip"
+    },
+    {
+      "id": "gfs-neohellenic-math",
+      "url": "https://mirror.ctan.org/fonts/gfsneohellenicmath.zip",
+      "format": "zip"
+    },
+    {
+      "id": "haranoaji",
+      "url": "https://mirror.ctan.org/fonts/haranoaji.zip",
+      "format": "zip"
+    },
+    {
+      "id": "adobe-source-sans",
+      "url": "https://github.com/adobe-fonts/source-sans/releases/download/3.052R/TTF-source-sans-3.052R.zip",
+      "format": "zip"
+    },
+    {
+      "id": "adobe-source-serif",
+      "url": "https://github.com/adobe-fonts/source-serif/releases/download/4.005R/source-serif-4.005_Desktop.zip",
+      "format": "zip"
+    }
+  ],
+  "manual": [
+    {
+      "families": ["Charter"],
+      "hint": "No stable open bundle in this script; add a licensed Charter-compatible .otf/.ttf (e.g. from your OS or a foundry) under fonts/bundled/charter/."
+    },
+    {
+      "families": ["HK Grotesk"],
+      "hint": "Not on Google Webfonts Helper; download from the rights holder (e.g. Hanken Design Co. / Fontshare) and drop .otf/.ttf into fonts/bundled/hk-grotesk/."
+    },
+    {
+      "families": ["Luciole", "Luciole Math"],
+      "hint": "Official zips from https://www.luciole-en-ligne.fr/ (or French government open-data mirrors)."
+    },
+    {
+      "families": ["Reforma 1918", "Reforma 1969", "Reforma 2018"],
+      "hint": "PampaType distributes Reforma behind a login; obtain files legally and place under fonts/bundled/reforma/."
+    },
+    {
+      "families": ["MOESongUN", "TW-MOE-Std-Kai"],
+      "hint": "Taiwan MOE fonts — follow MOE license terms; copy into fonts/bundled/."
+    },
+    {
+      "families": ["Infini", "Infini Picto"],
+      "hint": "CNAP Infini — check license; add manually if redistribution is allowed."
+    },
+    {
+      "families": ["Twitter Color Emoji"],
+      "hint": "Optional COLR emoji (e.g. twemoji-color-font releases); large; add only if you need it."
+    },
+    {
+      "families": ["VG5000"],
+      "hint": "Velvetyne VG5000 — download from velvetyne.fr if license fits your app."
+    }
+  ],
+  "notes": [
+    "Typst also embeds Libertinus Serif, New Computer Modern, and DejaVu Sans Mono via the typst-assets crate; files here may duplicate those faces.",
+    "Adobe Source Sans / Serif zips use current family names in font metadata (e.g. “Source Sans 3”); use #set text(font: \"…\") with the name Typst lists via list_typst_font_faces.",
+    "Source Sans Pro / Source Serif Pro in your list: older documents used those strings; after bundling, pick the exact family name from the in-app font picker (Ag / font list)."
+  ]
+}

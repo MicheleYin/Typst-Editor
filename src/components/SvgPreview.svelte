@@ -11,6 +11,7 @@
   } from "lucide-svelte";
 
   type CompileDiagnostic = {
+    severity?: "error" | "warning";
     file: string | null;
     line: number | null;
     column: number | null;
@@ -30,6 +31,7 @@
     currentPage = $bindable(0),
     pageCount,
     diagnostics = [],
+    warnings = [],
     stalePreview = false,
     scale = $bindable(1),
     translateX = $bindable(0),
@@ -40,6 +42,7 @@
     currentPage?: number;
     pageCount: number;
     diagnostics?: CompileDiagnostic[];
+    warnings?: CompileDiagnostic[];
     stalePreview?: boolean;
     scale?: number;
     translateX?: number;
@@ -51,23 +54,35 @@
   let startY = 0;
   let copiedBanner = $state(false);
   let copiedDiagnostics = $state(false);
+  let copiedWarnings = $state(false);
 
-  async function copyToClipboard(text: string, kind: "banner" | "diagnostics") {
+  async function copyToClipboard(
+    text: string,
+    kind: "banner" | "diagnostics" | "warnings",
+  ) {
     const t = text.trim();
     if (!t) return;
-    try {
-      await navigator.clipboard.writeText(t);
+    const markCopied = () => {
       if (kind === "banner") {
         copiedBanner = true;
         setTimeout(() => {
           copiedBanner = false;
         }, 2000);
-      } else {
+      } else if (kind === "diagnostics") {
         copiedDiagnostics = true;
         setTimeout(() => {
           copiedDiagnostics = false;
         }, 2000);
+      } else {
+        copiedWarnings = true;
+        setTimeout(() => {
+          copiedWarnings = false;
+        }, 2000);
       }
+    };
+    try {
+      await navigator.clipboard.writeText(t);
+      markCopied();
     } catch {
       try {
         const ta = document.createElement("textarea");
@@ -78,42 +93,48 @@
         ta.select();
         document.execCommand("copy");
         document.body.removeChild(ta);
-        if (kind === "banner") {
-          copiedBanner = true;
-          setTimeout(() => {
-            copiedBanner = false;
-          }, 2000);
-        } else {
-          copiedDiagnostics = true;
-          setTimeout(() => {
-            copiedDiagnostics = false;
-          }, 2000);
-        }
+        markCopied();
       } catch {
         /* ignore */
       }
     }
   }
 
+  function singleDiagnosticAsText(
+    d: CompileDiagnostic,
+    index1: number,
+    label: string,
+  ): string {
+    const loc = formatLocation(d);
+    const lines = [`[${label} ${index1}] ${loc ? `${loc}\n` : ""}${d.message}`];
+    if (d.hints?.length) {
+      lines.push("Hints:", ...d.hints.map((h: string) => `  - ${h}`));
+    }
+    if (d.trace?.length) {
+      for (const t of d.trace) {
+        let s = `  ↳ ${t.message}`;
+        if (t.line != null) {
+          s += ` (line ${t.line}${t.column != null ? `, col ${t.column}` : ""}${t.file ? ` · ${t.file}` : ""})`;
+        }
+        lines.push(s);
+      }
+    }
+    return lines.join("\n");
+  }
+
   function diagnosticsAsText(): string {
     return diagnostics
-      .map((d: CompileDiagnostic, i: number) => {
-        const loc = formatLocation(d);
-        const lines = [`[${i + 1}] ${loc ? `${loc}\n` : ""}${d.message}`];
-        if (d.hints?.length) {
-          lines.push("Hints:", ...d.hints.map((h: string) => `  - ${h}`));
-        }
-        if (d.trace?.length) {
-          for (const t of d.trace) {
-            let s = `  ↳ ${t.message}`;
-            if (t.line != null) {
-              s += ` (line ${t.line}${t.column != null ? `, col ${t.column}` : ""}${t.file ? ` · ${t.file}` : ""})`;
-            }
-            lines.push(s);
-          }
-        }
-        return lines.join("\n");
-      })
+      .map((d: CompileDiagnostic, i: number) =>
+        singleDiagnosticAsText(d, i + 1, "error"),
+      )
+      .join("\n\n---\n\n");
+  }
+
+  function warningsAsText(): string {
+    return warnings
+      .map((d: CompileDiagnostic, i: number) =>
+        singleDiagnosticAsText(d, i + 1, "warning"),
+      )
       .join("\n\n---\n\n");
   }
 
@@ -457,6 +478,87 @@
     </div>
   {/if}
 
+  {#if warnings.length > 0}
+    <div
+      class="shrink-0 max-h-[32vh] min-h-0 overflow-y-auto border-b border-amber-300 bg-amber-50/95"
+      role="status"
+    >
+      <div
+        class="flex items-center justify-between gap-2 px-3 py-2 border-b border-amber-200/90 bg-amber-100/50"
+      >
+        <div class="min-w-0">
+          <div
+            class="text-[10px] font-bold uppercase tracking-wide text-amber-900"
+          >
+            Compiler warning{warnings.length > 1 ? "s" : ""} ({warnings.length})
+          </div>
+          <p class="text-[11px] text-amber-950/90 mt-0.5 leading-snug">
+            Preview still builds, but results may be wrong (e.g. missing fonts). This app
+            does <strong>not</strong> use system fonts for Typst — add font files in
+            <strong class="font-semibold">Settings → Typst fonts</strong> or ship them in
+            <code class="font-mono text-[10px] bg-amber-200/60 px-1 rounded"
+              >resources/fonts/bundled</code
+            >.
+          </p>
+        </div>
+        <button
+          type="button"
+          onclick={() => copyToClipboard(warningsAsText(), "warnings")}
+          class="shrink-0 flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium text-amber-950 bg-white/90 hover:bg-white border border-amber-300 shadow-sm"
+          title="Copy all compiler warnings to clipboard"
+        >
+          {#if copiedWarnings}
+            <Check size={14} class="text-green-700" />
+            Copied
+          {:else}
+            <Copy size={14} />
+            Copy all
+          {/if}
+        </button>
+      </div>
+      <div class="px-3 pb-3 space-y-3 pt-2">
+        {#each warnings as w, idx (idx)}
+          <div
+            class="rounded-lg border border-amber-200 bg-white p-3 shadow-sm text-sm text-gray-900"
+          >
+            {#if formatLocation(w)}
+              <div
+                class="font-mono text-xs font-semibold text-amber-900 mb-1.5 tabular-nums"
+              >
+                {formatLocation(w)}
+              </div>
+            {/if}
+            <div class="text-gray-800 leading-snug">{w.message}</div>
+            {#if w.hints?.length}
+              <ul class="mt-2 space-y-1 text-xs text-gray-600 list-disc pl-4">
+                {#each w.hints as hint}
+                  <li>{hint}</li>
+                {/each}
+              </ul>
+            {/if}
+            {#if w.trace?.length}
+              <div class="mt-2 pt-2 border-t border-gray-100 space-y-1">
+                {#each w.trace as t}
+                  <div class="text-xs text-gray-600 pl-2 border-l-2 border-amber-200">
+                    <span class="text-gray-500">↳</span>
+                    {t.message}
+                    {#if t.line != null}
+                      <span class="font-mono text-gray-500">
+                        · line {t.line}{#if t.column != null}, col {t.column}{/if}
+                        {#if t.file}
+                          · {t.file}{/if}
+                      </span>
+                    {/if}
+                  </div>
+                {/each}
+              </div>
+            {/if}
+          </div>
+        {/each}
+      </div>
+    </div>
+  {/if}
+
   {#if diagnostics.length > 0}
     <div
       class="shrink-0 max-h-[38vh] min-h-0 overflow-y-auto border-b border-red-200 bg-red-50/95"
@@ -610,6 +712,8 @@
       >
         {#if diagnostics.length > 0}
           No preview yet — fix the errors above, or keep editing.
+        {:else if warnings.length > 0}
+          No pages yet — if the document is empty, add content. Otherwise check warnings above.
         {:else}
           Compile your document to see a preview.
         {/if}

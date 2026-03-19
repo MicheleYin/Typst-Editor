@@ -14,7 +14,8 @@
     "build:macos:appstore": "node scripts/gen-macos-appstore-entitlements.cjs && node scripts/ensure-macos-appstore-provisionprofile.cjs && node scripts/tauri-cli.cjs build --bundles app --target aarch64-apple-darwin -c src-tauri/tauri.macos-appstore.json && node scripts/sign-macos-appstore-pkg.cjs",
     "build:ios:appstore": "node scripts/tauri-cli.cjs ios build --export-method app-store-connect",
     "ios:init": "node scripts/tauri-cli.cjs ios init --ci",
-    "ios:open": "node scripts/tauri-cli.cjs ios build -- --open"
+    "ios:open": "node scripts/tauri-cli.cjs ios build -- --open",
+    "fonts:download": "node scripts/download-bundled-fonts.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",
@@ -38,6 +39,7 @@
     "postcss": "^8.5.8",
     "tailwindcss": "^4.2.1",
     "typescript": "~5.8.3",
+    "unzipper": "^0.12.3",
     "vite": "^7.0.4"
   }
 }

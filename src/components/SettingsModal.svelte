@@ -20,10 +20,13 @@
     isOpen,
     onClose,
     initialTab = "shortcuts",
+    onFontsChanged,
   } = $props<{
     isOpen: boolean;
     onClose: () => void;
     initialTab?: "shortcuts" | "packageCache" | "fonts" | "faq";
+    /** Refresh global Typst font catalog (e.g. toolbar picker) without closing Settings. */
+    onFontsChanged?: () => void;
   }>();
 
   let tab = $state<"shortcuts" | "packageCache" | "fonts" | "faq">("shortcuts");
@@ -98,6 +101,7 @@
       const p = await open({ directory: true, multiple: false });
       if (typeof p !== "string" || !p) return;
       fontConfig = await addTypstFontsImport([p], true);
+      onFontsChanged?.();
     } catch (e) {
       fontCfgError = String(e);
     } finally {
@@ -116,6 +120,7 @@
       if (p == null) return;
       const arr = Array.isArray(p) ? p : [p];
       fontConfig = await addTypstFontsImport(arr, false);
+      onFontsChanged?.();
     } catch (e) {
       fontCfgError = String(e);
     } finally {
@@ -130,6 +135,7 @@
     fontCfgError = "";
     try {
       fontConfig = await removeTypstImportedFont(path);
+      onFontsChanged?.();
     } catch (e) {
       fontCfgError = String(e);
     } finally {
@@ -165,6 +171,7 @@
       });
       if (typeof p !== "string") return;
       fontConfig = await importTypstFontConfigJson(p);
+      onFontsChanged?.();
     } catch (e) {
       fontCfgError = String(e);
     } finally {
