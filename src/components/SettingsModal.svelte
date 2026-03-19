@@ -358,15 +358,68 @@
               <summary
                 class="cursor-pointer list-none font-medium text-[var(--app-fg)] flex items-center justify-between gap-2 [&::-webkit-details-marker]:hidden"
               >
-                <span>What&apos;s the difference between opening a file and a folder?</span>
+                <span>How do files and projects work?</span>
                 <span class="text-[var(--app-fg-muted)] text-xs shrink-0">▼</span>
               </summary>
-              <p class="mt-2 text-xs text-[var(--app-fg-secondary)] leading-relaxed pl-0.5">
-                <strong class="text-[var(--app-fg)]">Open file</strong> edits a single <code
-                  class="text-[var(--app-link)]">.typ</code
-                > document. <strong class="text-[var(--app-fg)]">Open folder</strong> is for projects with
-                multiple files, images, or modules that import each other.
-              </p>
+              <div class="mt-2 text-xs text-[var(--app-fg-secondary)] leading-relaxed pl-0.5 space-y-2">
+                <p>
+                  Typst Editor is built around <strong class="text-[var(--app-fg)]">projects</strong>: a folder
+                  that holds your <code class="text-[var(--app-link)]">.typ</code> sources, assets, and usually a
+                  <code class="text-[var(--app-link)]">main.typ</code>. You start from the
+                  <strong class="text-[var(--app-fg)]">project hub</strong>, then edit in the sidebar and
+                  editor—saves go into that project. Use <strong class="text-[var(--app-fg)]">New File</strong> to
+                  add more <code class="text-[var(--app-link)]">.typ</code> files inside the project,
+                  <strong class="text-[var(--app-fg)]">Import .typ</strong> to copy files in, and
+                  <strong class="text-[var(--app-fg)]">Export project</strong> for a ZIP backup.
+                </p>
+                <p>
+                  <strong class="text-[var(--app-fg)]">On Mac, Windows, and Linux</strong> you
+                  <strong class="text-[var(--app-fg)]">open a folder on disk</strong> (or create a new subfolder in
+                  a location you pick). The app reads and writes those files directly—nothing is duplicated into
+                  hidden app storage. <strong class="text-[var(--app-fg)]">Recent projects</strong> is only a
+                  shortcut list; removing one from the list does not delete files.
+                </p>
+                <p>
+                  <strong class="text-[var(--app-fg)]">On iPhone and iPad</strong> projects live inside the
+                  app&apos;s sandbox (under <strong class="text-[var(--app-fg)]">Files → On My iPhone/iPad</strong>).
+                  You create projects there or <strong class="text-[var(--app-fg)]">import a ZIP</strong> (e.g.
+                  compress a folder in Files, then import the archive). Deleting a project from the hub removes
+                  that copy inside the app.
+                </p>
+              </div>
+            </details>
+            <details
+              class="group rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)] px-3 py-2 open:pb-3"
+            >
+              <summary
+                class="cursor-pointer list-none font-medium text-[var(--app-fg)] flex items-center justify-between gap-2 [&::-webkit-details-marker]:hidden"
+              >
+                <span>Why do iPad and desktop work differently?</span>
+                <span class="text-[var(--app-fg-muted)] text-xs shrink-0">▼</span>
+              </summary>
+              <div class="mt-2 text-xs text-[var(--app-fg-secondary)] leading-relaxed pl-0.5 space-y-2">
+                <p>
+                  <strong class="text-[var(--app-fg)]">iOS and iPadOS</strong> use a strict
+                  <strong class="text-[var(--app-fg)]">sandbox</strong>: each app only has guaranteed access to its
+                  own container. It cannot silently read or write arbitrary folders elsewhere on the device the
+                  way a Mac app can. So projects are stored in the app&apos;s Documents area, and bringing work in
+                  often means <strong class="text-[var(--app-fg)]">importing a ZIP</strong> (or creating a new
+                  project there)—that matches what Apple and the App Store expect for security and privacy.
+                </p>
+                <p>
+                  <strong class="text-[var(--app-fg)]">Desktop</strong> apps run with normal file-system access
+                  once you choose a folder (e.g. via the system file dialog). The editor can work
+                  <strong class="text-[var(--app-fg)]">in place</strong> on your Git folder, Dropbox path, or USB
+                  drive—no extra copy step. The app only keeps a small
+                  <strong class="text-[var(--app-fg)]">recent-projects list</strong> in its own data directory so you
+                  can reopen folders quickly.
+                </p>
+                <p>
+                  Same editor and preview on both; the difference is
+                  <strong class="text-[var(--app-fg)]">where files live</strong> and
+                  <strong class="text-[var(--app-fg)]">how the OS lets the app reach them</strong>.
+                </p>
+              </div>
             </details>
           </div>
         {:else if tab === "fonts"}
