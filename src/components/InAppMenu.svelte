@@ -10,6 +10,8 @@
     hubAllowsFolderImport = false,
     /** Desktop: open folder on disk (no ZIP on hub). */
     hubDirectFolders = false,
+    /** When false, File → Export… is disabled (e.g. current file is not `.typ`). */
+    exportTypstEnabled = true,
   } = $props<{
     onAction: (id: string) => void;
     landingPage?: boolean;
@@ -17,6 +19,7 @@
     iosMenuProject?: boolean;
     hubAllowsFolderImport?: boolean;
     hubDirectFolders?: boolean;
+    exportTypstEnabled?: boolean;
   }>();
 
   let open = $state(false);
@@ -63,7 +66,7 @@
     { id: "ios-export-project", label: "Export project…" },
     { id: "file-save", label: "Save", disabled: false },
     { id: "file-save-as", label: "Save As…", disabled: false },
-    { id: "file-export-pdf", label: "Export PDF…", disabled: false },
+    { id: "file-export-typst", label: "Export…", disabled: false },
   ];
 
   const editItems: Item[] = [
@@ -90,6 +93,9 @@
   ];
 
   function fileItemDisabled(item: Item): boolean {
+    if (item.id === "file-export-typst" && !exportTypstEnabled) {
+      return true;
+    }
     if (iosMenuHub) {
       return false;
     }
@@ -97,7 +103,7 @@
     return (
       item.id === "file-save" ||
       item.id === "file-save-as" ||
-      item.id === "file-export-pdf"
+      item.id === "file-export-typst"
     );
   }
 

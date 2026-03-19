@@ -50,9 +50,11 @@
     /** When true, hide the preview panel toggle (e.g. image/PDF full-width preview). */
     suppressPreviewToggle = false,
     showPanelToggles = true,
-    showExportPdf = false,
-    pdfExporting = false,
-    onExportPdf,
+    showExportTypst = false,
+    /** When false, in-app File → Export… is shown disabled (e.g. not a `.typ` file). */
+    exportTypstEnabled = true,
+    exportBusy = false,
+    onOpenExportTypst,
     onShowCommandPalette,
     showInAppMenu = false,
     onInAppMenuAction,
@@ -87,9 +89,9 @@
     onTogglePreview: () => void;
     suppressPreviewToggle?: boolean;
     showPanelToggles?: boolean;
-    showExportPdf?: boolean;
-    pdfExporting?: boolean;
-    onExportPdf?: () => void | Promise<void>;
+    showExportTypst?: boolean;
+    exportBusy?: boolean;
+    onOpenExportTypst?: () => void | Promise<void>;
     onShowCommandPalette?: () => void;
   }>();
 
@@ -124,6 +126,7 @@
         {iosMenuProject}
         {hubAllowsFolderImport}
         {hubDirectFolders}
+        {exportTypstEnabled}
       />
     {/if}
     {#if showNativeBackToHub && onBackToProjects}
@@ -228,16 +231,16 @@
         <SquareTerminal size={18} aria-hidden="true" />
       </button>
     {/if}
-    {#if showExportPdf && onExportPdf}
+    {#if showExportTypst && onOpenExportTypst}
       <button
         type="button"
-        onclick={() => void onExportPdf()}
-        disabled={pdfExporting}
+        onclick={() => void onOpenExportTypst()}
+        disabled={exportBusy}
         class="p-1.5 rounded transition-colors flex items-center justify-center min-w-[2.25rem] disabled:opacity-50 disabled:pointer-events-none text-[var(--app-fg-secondary)] hover:bg-[var(--app-btn-ghost-hover)] hover:text-[var(--app-link)]"
-        title={pdfExporting ? "Exporting PDF…" : "Export PDF"}
-        aria-busy={pdfExporting}
+        title={exportBusy ? "Exporting…" : "Export (PDF, SVG, PNG, HTML…)"}
+        aria-busy={exportBusy}
       >
-        {#if pdfExporting}
+        {#if exportBusy}
           <Loader2 size={18} class="animate-spin text-[var(--app-link)]" aria-hidden="true" />
         {:else}
           <FileDown size={18} aria-hidden="true" />

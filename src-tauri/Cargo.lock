@@ -5875,6 +5875,7 @@ dependencies = [
  "typst-assets",
  "typst-html",
  "typst-kit",
+ "typst-library",
  "typst-pdf",
  "typst-svg",
  "url",

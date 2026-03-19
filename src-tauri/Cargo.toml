@@ -38,4 +38,5 @@ url = "2"
 typst-html = "0.14.2"
 resvg = "0.44"
 png = "0.17"
+typst-library = "0.14.2"
 

@@ -15,8 +15,9 @@ use tauri::Manager;
 #[cfg(desktop)]
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
 use typst::diag::{FileError, FileResult, Severity, SourceDiagnostic};
-use typst::foundations::{Bytes, Datetime, Feature, Smart};
+use typst::foundations::{Bytes, Datetime, Smart};
 use typst::layout::PagedDocument;
+use typst_library::Feature;
 use typst::syntax::{FileId, Source, Span, VirtualPath};
 use typst::text::{Font, FontBook};
 use typst::utils::LazyHash;
@@ -54,6 +55,31 @@ fn font_config_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
         .map_err(|e| e.to_string())
 }
 
+/// Drop config entries that are not real font files under the app import directory (e.g. after a
+/// manual delete, failed removal, or path drift). Returns true if the list changed.
+fn prune_import_font_list(app: &tauri::AppHandle, c: &mut TypstFontConfig) -> bool {
+    let n_before = c.files.len();
+    let import_canon = user_font_import_dir(app)
+        .ok()
+        .and_then(|d| fs::canonicalize(&d).ok());
+
+    c.files.retain(|f| {
+        let p = Path::new(f);
+        if !p.is_file() || !is_font_extension(p) {
+            return false;
+        }
+        match &import_canon {
+            Some(ic) => fs::canonicalize(p)
+                .map(|c| c.starts_with(ic))
+                .unwrap_or(false),
+            None => true,
+        }
+    });
+    c.files.sort();
+    c.files.dedup();
+    n_before != c.files.len()
+}
+
 fn load_typst_font_config(app: &tauri::AppHandle) -> TypstFontConfig {
     let Ok(path) = font_config_path(app) else {
         return TypstFontConfig::default();
@@ -61,7 +87,11 @@ fn load_typst_font_config(app: &tauri::AppHandle) -> TypstFontConfig {
     let Ok(s) = fs::read_to_string(&path) else {
         return TypstFontConfig::default();
     };
-    serde_json::from_str(&s).unwrap_or_default()
+    let mut c: TypstFontConfig = serde_json::from_str(&s).unwrap_or_default();
+    if prune_import_font_list(app, &mut c) {
+        let _ = save_typst_font_config(app, &c);
+    }
+    c
 }
 
 fn save_typst_font_config(app: &tauri::AppHandle, c: &TypstFontConfig) -> Result<(), String> {
@@ -666,26 +696,25 @@ fn export_paths_for_pages(out: &Path, page_count: usize, ext: &str) -> Vec<PathB
 
 fn pdf_standards_for_profile(profile: &str) -> Result<PdfStandards, String> {
     match profile {
-        "1.4" => PdfStandards::new(&[PdfStandard::V_1_4]),
-        "1.5" => PdfStandards::new(&[PdfStandard::V_1_5]),
-        "1.6" => PdfStandards::new(&[PdfStandard::V_1_6]),
+        "1.4" => PdfStandards::new(&[PdfStandard::V_1_4]).map_err(|e| e.to_string()),
+        "1.5" => PdfStandards::new(&[PdfStandard::V_1_5]).map_err(|e| e.to_string()),
+        "1.6" => PdfStandards::new(&[PdfStandard::V_1_6]).map_err(|e| e.to_string()),
         "1.7" | "default" => Ok(PdfStandards::default()),
-        "2.0" => PdfStandards::new(&[PdfStandard::V_2_0]),
-        "a-1b" => PdfStandards::new(&[PdfStandard::A_1b]),
-        "a-1a" => PdfStandards::new(&[PdfStandard::A_1a]),
-        "a-2b" => PdfStandards::new(&[PdfStandard::A_2b]),
-        "a-2u" => PdfStandards::new(&[PdfStandard::A_2u]),
-        "a-2a" => PdfStandards::new(&[PdfStandard::A_2a]),
-        "a-3b" => PdfStandards::new(&[PdfStandard::A_3b]),
-        "a-3u" => PdfStandards::new(&[PdfStandard::A_3u]),
-        "a-3a" => PdfStandards::new(&[PdfStandard::A_3a]),
-        "a-4" => PdfStandards::new(&[PdfStandard::A_4]),
-        "a-4f" => PdfStandards::new(&[PdfStandard::A_4f]),
-        "a-4e" => PdfStandards::new(&[PdfStandard::A_4e]),
-        "ua-1" => PdfStandards::new(&[PdfStandard::Ua_1]),
+        "2.0" => PdfStandards::new(&[PdfStandard::V_2_0]).map_err(|e| e.to_string()),
+        "a-1b" => PdfStandards::new(&[PdfStandard::A_1b]).map_err(|e| e.to_string()),
+        "a-1a" => PdfStandards::new(&[PdfStandard::A_1a]).map_err(|e| e.to_string()),
+        "a-2b" => PdfStandards::new(&[PdfStandard::A_2b]).map_err(|e| e.to_string()),
+        "a-2u" => PdfStandards::new(&[PdfStandard::A_2u]).map_err(|e| e.to_string()),
+        "a-2a" => PdfStandards::new(&[PdfStandard::A_2a]).map_err(|e| e.to_string()),
+        "a-3b" => PdfStandards::new(&[PdfStandard::A_3b]).map_err(|e| e.to_string()),
+        "a-3u" => PdfStandards::new(&[PdfStandard::A_3u]).map_err(|e| e.to_string()),
+        "a-3a" => PdfStandards::new(&[PdfStandard::A_3a]).map_err(|e| e.to_string()),
+        "a-4" => PdfStandards::new(&[PdfStandard::A_4]).map_err(|e| e.to_string()),
+        "a-4f" => PdfStandards::new(&[PdfStandard::A_4f]).map_err(|e| e.to_string()),
+        "a-4e" => PdfStandards::new(&[PdfStandard::A_4e]).map_err(|e| e.to_string()),
+        "ua-1" => PdfStandards::new(&[PdfStandard::Ua_1]).map_err(|e| e.to_string()),
         _ => Err(format!("Unknown PDF profile: {profile}")),
     }
-    .map_err(|e| e.into())
 }
 
 fn build_pdf_options(profile: &str, tagged_arg: bool) -> Result<PdfOptions<'static>, String> {
@@ -1065,10 +1094,16 @@ fn remove_typst_imported_font(app: tauri::AppHandle, path: String) -> Result<Typ
     // retain(..., unwrap_or(true)) would keep the stale entry.
     let mut config = load_typst_font_config(&app);
     config.files.retain(|f| {
-        fs::canonicalize(f)
-            .map(|c| c != canon)
-            .unwrap_or(true)
+        if f == &path {
+            return false;
+        }
+        match fs::canonicalize(Path::new(f)) {
+            Ok(c) => c != canon,
+            Err(_) => true,
+        }
     });
+    config.files.sort();
+    config.files.dedup();
     save_typst_font_config(&app, &config)?;
     let _ = fs::remove_file(&canon);
     Ok(config)

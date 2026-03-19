@@ -13,6 +13,9 @@
   } from "@tauri-apps/plugin-fs";
   import { join } from "@tauri-apps/api/path";
   import Header from "./components/Header.svelte";
+  import ExportTypstModal, {
+    type ExportTypstKindPayload,
+  } from "./components/ExportTypstModal.svelte";
   import Sidebar from "./components/Sidebar.svelte";
   import SettingsModal from "./components/SettingsModal.svelte";
   import IosProjectHub from "./components/IosProjectHub.svelte";
@@ -350,7 +353,8 @@
   };
   let compileDiagnostics = $state<CompileDiagnostic[]>([]);
   let compileWarnings = $state<CompileDiagnostic[]>([]);
-  let pdfExporting = $state(false);
+  let exportBusy = $state(false);
+  let exportTypstModalOpen = $state(false);
 
   let previewPages = $derived(
     compileDiagnostics.length > 0 && lastValidPages.length > 0
@@ -484,6 +488,13 @@
   );
   let editorLanguageId = $derived(monacoLanguageIdFromPath(currentFilePath ?? "untitled.typ"));
   let isCurrentBinary = $derived(!!currentTab?.isBinary);
+  /** Typst export (PDF / SVG / PNG / HTML): only from an open `.typ` source tab. */
+  let exportTypstAllowed = $derived(
+    !isProjectHub &&
+      !isCurrentBinary &&
+      !!currentFilePath &&
+      isTypstPath(currentFilePath),
+  );
   /** Raster / PDF: full-width preview only (no Monaco). */
   let isPreviewOnlyMedia = $derived(
     !!currentTab?.isBinary &&
@@ -1211,46 +1222,80 @@
     }
   }
 
-  async function handleExportPdf() {
-    if (pdfExporting) return;
-    pdfExporting = true;
+  function openExportTypstModal() {
+    if (!exportTypstAllowed) return;
+    exportTypstModalOpen = true;
+  }
+
+  async function handleExportTypstPayload(payload: ExportTypstKindPayload) {
+    exportTypstModalOpen = false;
+    if (exportBusy) return;
+    const base = currentFilePath
+      ? currentFilePath.replace(/\.typ$/i, "")
+      : "document";
+    const ext =
+      payload.kind === "pdf"
+        ? "pdf"
+        : payload.kind === "svg"
+          ? "svg"
+          : payload.kind === "png"
+            ? "png"
+            : "html";
+    const defaultPath = `${base}.${ext}`;
+    const filterName =
+      payload.kind === "pdf"
+        ? "PDF"
+        : payload.kind === "svg"
+          ? "SVG"
+          : payload.kind === "png"
+            ? "PNG"
+            : "HTML";
+    const path = await save({
+      defaultPath,
+      filters: [{ name: filterName, extensions: [ext] }],
+    });
+    if (path === null) return;
+    exportBusy = true;
     try {
-      const defaultPath = currentFilePath
-        ? currentFilePath.replace(/\.typ$/i, "") + ".pdf"
-        : "document.pdf";
-      const path = await save({
-        defaultPath,
-        filters: [{ name: "PDF", extensions: ["pdf"] }],
+      const exportResult = await invoke<{
+        warnings: CompileDiagnostic[];
+        outputPaths: string[];
+      }>("export_typst", {
+        content,
+        mainPath: currentFilePath ?? null,
+        outputPath: path,
+        exportKind: payload,
       });
-      if (path === null) return;
-      const exportResult = await invoke<{ warnings: CompileDiagnostic[] }>(
-        "export_typst_pdf",
-        {
-          content,
-          mainPath: currentFilePath ?? null,
-          outputPath: path,
-        },
-      );
       const w = exportResult?.warnings ?? [];
+      const outs = exportResult?.outputPaths ?? [path];
+      const filesNote =
+        outs.length > 1
+          ? `\n\nFiles written (${outs.length}):\n${outs.map((p) => `• ${p}`).join("\n")}`
+          : "";
+      const title =
+        payload.kind === "pdf"
+          ? "Export PDF"
+          : payload.kind === "svg"
+            ? "Export SVG"
+            : payload.kind === "png"
+              ? "Export PNG"
+              : "Export HTML";
       if (w.length > 0) {
         const detail = w.map((d) => d.message).join("\n");
         await message(
-          `PDF saved successfully.\n\nCompiler warnings (${w.length}):\n${detail}\n\nTip: this app does not load system fonts for Typst — import fonts in Settings → Typst fonts (or ship them in resources/fonts/bundled).`,
-          { title: "Export PDF", kind: "info" },
+          `Export finished.${filesNote}\n\nCompiler warnings (${w.length}):\n${detail}\n\nTip: this app does not load system fonts for Typst — import fonts in Settings → Typst fonts (or ship them in resources/fonts/bundled).`,
+          { title, kind: "info" },
         );
       } else {
-        await message(`PDF saved successfully.`, {
-          title: "Export PDF",
-          kind: "info",
-        });
+        await message(`Export finished.${filesNote}`, { title, kind: "info" });
       }
     } catch (e) {
       await message(String(e), {
-        title: "PDF export failed",
+        title: "Export failed",
         kind: "error",
       });
     } finally {
-      pdfExporting = false;
+      exportBusy = false;
     }
   }
 
@@ -1431,6 +1476,9 @@
       case "file.saveAs":
         handleSaveAs();
         break;
+      case "file.exportTypst":
+        openExportTypstModal();
+        break;
       case "view.zoomIn":
         appZoomIn();
         break;
@@ -1492,8 +1540,8 @@
       case "file-save-as":
         void handleSaveAs();
         break;
-      case "file-export-pdf":
-        void handleExportPdf();
+      case "file-export-typst":
+        openExportTypstModal();
         break;
       case "view-zoom-in":
         appZoomIn();
@@ -1679,6 +1727,7 @@
       "file.openFolder": () => void hubImportFolderShortcut(),
       "file.save": handleSave,
       "file.saveAs": handleSaveAs,
+      "file.exportTypst": openExportTypstModal,
       "view.zoomIn": appZoomIn,
       "view.zoomOut": appZoomOut,
       "view.resetZoom": resetAppZoom,
@@ -1727,9 +1776,10 @@
     {previewVisible}
     onTogglePreview={() => (previewVisible = !previewVisible)}
     suppressPreviewToggle={isPreviewOnlyMedia}
-    showExportPdf={!isProjectHub && !isCurrentBinary}
-    {pdfExporting}
-    onExportPdf={handleExportPdf}
+    showExportTypst={exportTypstAllowed}
+    exportTypstEnabled={exportTypstAllowed}
+    {exportBusy}
+    onOpenExportTypst={openExportTypstModal}
     onShowCommandPalette={!isProjectHub
       ? () => {
           const ed = editor;
@@ -1748,6 +1798,12 @@
     }}
     initialTab={settingsInitialTab}
     onFontsChanged={() => void refreshTypstFontFaces()}
+  />
+
+  <ExportTypstModal
+    open={exportTypstModalOpen}
+    onClose={() => (exportTypstModalOpen = false)}
+    onConfirm={handleExportTypstPayload}
   />
 
   {#if saveAsModalOpen}

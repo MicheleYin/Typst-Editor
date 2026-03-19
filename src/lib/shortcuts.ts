@@ -11,6 +11,7 @@ export const APP_COMMAND_IDS = new Set([
   'file.openFolder',
   'file.save',
   'file.saveAs',
+  'file.exportTypst',
   'view.zoomIn',
   'view.zoomOut',
   'view.resetZoom',
@@ -26,6 +27,7 @@ const APP_SHORTCUT_LABELS: Record<string, { label: string; category: string }> =
   'file.openFolder': { label: 'Open Folder', category: 'File' },
   'file.save': { label: 'Save File', category: 'File' },
   'file.saveAs': { label: 'Save As', category: 'File' },
+  'file.exportTypst': { label: 'Export…', category: 'File' },
   'view.zoomIn': { label: 'Zoom In', category: 'View' },
   'view.zoomOut': { label: 'Zoom Out', category: 'View' },
   'view.resetZoom': { label: 'Reset Zoom', category: 'View' },
@@ -42,6 +44,7 @@ export const APP_SHORTCUT_DEFAULT_KEYS: Record<string, string> = {
   'file.openFolder': 'Mod+Shift+O',
   'file.save': 'Mod+S',
   'file.saveAs': 'Mod+Shift+S',
+  'file.exportTypst': 'Mod+Shift+E',
   'view.zoomIn': 'Mod+=',
   'view.zoomOut': 'Mod+-',
   'view.resetZoom': 'Mod+0',
@@ -317,6 +320,7 @@ export function menuShortcutLabel(
     'view-reset-zoom': 'view.resetZoom',
     'view-toggle-sidebar': 'view.toggleSidebar',
     'help-shortcuts': 'settings.shortcuts',
+    'file-export-typst': 'file.exportTypst',
   };
   const appKey = appMap[menuId];
   if (appKey) {
@@ -324,7 +328,6 @@ export function menuShortcutLabel(
     if (raw) return formatKeys(normalizeKeySpec(raw));
   }
   const fixed: Record<string, string> = {
-    'file-export-pdf': 'Mod+Shift+E',
     'edit-undo': 'Mod+Z',
     'edit-redo': 'Mod+Shift+Z',
     'edit-cut': 'Mod+X',

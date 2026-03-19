@@ -336,13 +336,13 @@
               <summary
                 class="cursor-pointer list-none font-medium text-[var(--app-fg)] flex items-center justify-between gap-2 [&::-webkit-details-marker]:hidden"
               >
-                <span>How do I export a PDF?</span>
+                <span>How do I export (PDF, images, HTML)?</span>
                 <span class="text-[var(--app-fg-muted)] text-xs shrink-0">▼</span>
               </summary>
               <p class="mt-2 text-xs text-[var(--app-fg-secondary)] leading-relaxed pl-0.5">
                 With a document open, use the export button in the header or
-                <strong class="text-[var(--app-fg)]">File → Export PDF</strong> (in-app menu on mobile).
-                Choose where to save the file.
+                <strong class="text-[var(--app-fg)]">File → Export…</strong> (in-app menu on mobile). Pick
+                PDF (several standards), SVG, PNG (with PPI), or HTML, then choose where to save.
               </p>
             </details>
             <details
