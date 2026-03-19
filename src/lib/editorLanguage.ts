@@ -9,7 +9,8 @@ export function monacoLanguageIdFromPath(filePath: string): string {
     json: "json",
     jsonc: "json",
     md: "markdown",
-    mdx: "mdx",
+    // MDX: use Markdown highlighting for basic editing (no JSX-aware lexer here).
+    mdx: "markdown",
     markdown: "markdown",
     svg: "xml",
     xml: "xml",
@@ -109,4 +110,14 @@ export function isTypstPath(filePath: string): boolean {
 
 export function isSvgSourcePath(filePath: string): boolean {
   return filePath.toLowerCase().endsWith(".svg");
+}
+
+export function isMarkdownPath(filePath: string): boolean {
+  const lower = filePath.toLowerCase();
+  return (
+    lower.endsWith(".md") ||
+    lower.endsWith(".markdown") ||
+    lower.endsWith(".mdwn") ||
+    lower.endsWith(".mdx")
+  );
 }

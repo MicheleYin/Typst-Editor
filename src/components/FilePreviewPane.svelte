@@ -21,6 +21,7 @@
     | { kind: "image"; url: string; label: string }
     | { kind: "pdf"; url: string }
     | { kind: "svg-inline"; svg: string }
+    | { kind: "markdown"; html: string }
     | { kind: "none"; hint: string };
 
   let {
@@ -378,6 +379,23 @@
       class="flex-1 min-h-0 w-full border-0 bg-[var(--app-bg)]"
     ></iframe>
   </div>
+{:else if mode.kind === "markdown"}
+  <div
+    class="h-full w-full min-h-0 flex flex-col bg-[var(--app-surface)] overflow-hidden"
+    role="region"
+    aria-label="Markdown preview"
+  >
+    <div
+      class="shrink-0 px-2 py-1.5 text-[10px] uppercase tracking-wider text-[var(--app-fg-muted)] border-b border-[var(--app-border)]"
+    >
+      Markdown preview
+    </div>
+    <div
+      class="md-preview flex-1 min-h-0 overflow-auto px-4 py-3 text-[var(--app-fg)] text-sm leading-relaxed bg-[var(--app-bg)]"
+    >
+      {@html mode.html}
+    </div>
+  </div>
 {:else if mode.kind === "svg-inline"}
   <div
     class="h-full w-full min-h-0 flex flex-col bg-[var(--app-surface)] overflow-hidden"
@@ -461,6 +479,106 @@
 {/if}
 
 <style>
+  /* Markdown preview (sanitized HTML) */
+  .md-preview :global(h1) {
+    font-size: 1.5rem;
+    font-weight: 700;
+    margin: 0.75rem 0 0.5rem;
+    line-height: 1.25;
+    color: var(--app-fg-secondary);
+  }
+  .md-preview :global(h2) {
+    font-size: 1.25rem;
+    font-weight: 650;
+    margin: 0.65rem 0 0.4rem;
+    line-height: 1.3;
+    color: var(--app-fg-secondary);
+  }
+  .md-preview :global(h3) {
+    font-size: 1.1rem;
+    font-weight: 600;
+    margin: 0.5rem 0 0.35rem;
+    color: var(--app-fg-secondary);
+  }
+  .md-preview :global(h4),
+  .md-preview :global(h5),
+  .md-preview :global(h6) {
+    font-size: 1rem;
+    font-weight: 600;
+    margin: 0.45rem 0 0.3rem;
+    color: var(--app-fg-secondary);
+  }
+  .md-preview :global(p) {
+    margin: 0.4rem 0;
+  }
+  .md-preview :global(a) {
+    color: var(--app-accent, #6c9ef8);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+  .md-preview :global(ul),
+  .md-preview :global(ol) {
+    margin: 0.35rem 0;
+    padding-left: 1.35rem;
+  }
+  .md-preview :global(li) {
+    margin: 0.15rem 0;
+  }
+  .md-preview :global(blockquote) {
+    margin: 0.5rem 0;
+    padding: 0.25rem 0 0.25rem 0.75rem;
+    border-left: 3px solid var(--app-border);
+    color: var(--app-fg-muted);
+  }
+  .md-preview :global(code) {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 0.9em;
+    padding: 0.1em 0.35em;
+    border-radius: 4px;
+    background: var(--app-surface-elevated, var(--app-surface));
+    border: 1px solid var(--app-border);
+  }
+  .md-preview :global(pre) {
+    margin: 0.5rem 0;
+    padding: 0.65rem 0.85rem;
+    overflow-x: auto;
+    border-radius: 6px;
+    background: var(--app-surface-elevated, var(--app-surface));
+    border: 1px solid var(--app-border);
+  }
+  .md-preview :global(pre code) {
+    padding: 0;
+    border: none;
+    background: transparent;
+    font-size: 0.85em;
+  }
+  .md-preview :global(hr) {
+    margin: 0.75rem 0;
+    border: none;
+    border-top: 1px solid var(--app-border);
+  }
+  .md-preview :global(table) {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 0.5rem 0;
+    font-size: 0.9em;
+  }
+  .md-preview :global(th),
+  .md-preview :global(td) {
+    border: 1px solid var(--app-border);
+    padding: 0.35rem 0.5rem;
+    text-align: left;
+  }
+  .md-preview :global(th) {
+    background: var(--app-surface-elevated, var(--app-surface));
+    font-weight: 600;
+  }
+  .md-preview :global(img) {
+    max-width: 100%;
+    height: auto;
+    border-radius: 4px;
+  }
+
   .checkerboard {
     background-image: linear-gradient(45deg, var(--app-border) 25%, transparent 25%),
       linear-gradient(-45deg, var(--app-border) 25%, transparent 25%),

@@ -24,7 +24,9 @@
     isPdfPath,
     isTypstPath,
     isSvgSourcePath,
+    isMarkdownPath,
   } from "./lib/editorLanguage";
+  import { renderMarkdownToSafeHtml } from "./lib/markdownPreview";
   import {
     createAssetPreviewUrl,
     revokeAssetPreviewUrl,
@@ -508,6 +510,12 @@
     if (isSvgSourcePath(path)) {
       return { kind: "svg-inline" as const, svg: content };
     }
+    if (isMarkdownPath(path)) {
+      return {
+        kind: "markdown" as const,
+        html: renderMarkdownToSafeHtml(content),
+      };
+    }
     if (isTypstPath(path)) {
       return {
         kind: "typst" as const,
@@ -520,7 +528,7 @@
     }
     return {
       kind: "none" as const,
-      hint: "Live Typst preview is for .typ files. Use PNG, JPEG, WebP, GIF, SVG, or PDF for visual preview.",
+      hint: "Live preview: Typst for .typ, Markdown for .md. Use PNG, JPEG, WebP, GIF, SVG, or PDF for assets.",
     };
   });
 
@@ -597,9 +605,6 @@
 
   async function openFileByPath(path: string) {
     try {
-      if (iosProjectPath && currentFilePath && currentFilePath !== path) {
-        await iosFlushCurrentEditor();
-      }
       const existing = openFiles.find((f) => f.path === path);
       if (existing) {
         content = existing.content;
@@ -1143,35 +1148,6 @@
       error = `Error saving as: ${err}`;
     }
   }
-
-  $effect(() => {
-    if (currentFilePath && content) {
-      const path = currentFilePath;
-      const text = content;
-      const debounceMs = iosProjectPath ? 500 : 1000;
-      const timeoutId = setTimeout(async () => {
-        try {
-          await writeFileAtPath(path, text);
-          if (iosProjectPath && path.startsWith(iosProjectPath)) {
-            openFiles = openFiles.map((f) =>
-              f.path === path
-                ? {
-                    ...f,
-                    content: text,
-                    isDirty: false,
-                    lastSaved: new Date(),
-                  }
-                : f,
-            );
-            touchProjectMetaUpdated();
-          }
-        } catch (err) {
-          console.error("Auto-sync failed:", err);
-        }
-      }, debounceMs);
-      return () => clearTimeout(timeoutId);
-    }
-  });
 
   async function compile(
     text: string,
@@ -1950,7 +1926,6 @@
         {currentFolder}
         {folderFiles}
         onSelectFile={openFileByPath}
-        onCloseFile={handleCloseFile}
         onRefreshFolder={handleRefreshFolderExplorer}
         onExplorerRenameFile={openExplorerRenameModal}
         onExplorerDeleteFile={handleExplorerDeleteFile}

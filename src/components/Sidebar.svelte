@@ -4,9 +4,7 @@
     Folder,
     ChevronRight,
     ChevronDown,
-    X,
     RefreshCw,
-    
   } from "lucide-svelte";
   import type { FolderExplorerNode } from "../lib/folderExplorerTree";
 
@@ -26,7 +24,6 @@
     currentFolder,
     folderFiles,
     onSelectFile,
-    onCloseFile,
     onRefreshFolder,
     onExplorerRenameFile,
     onExplorerDeleteFile,
@@ -38,7 +35,6 @@
     currentFolder: string | null;
     folderFiles: FolderExplorerNode[];
     onSelectFile: (path: string) => void;
-    onCloseFile: (path: string) => void;
     onRefreshFolder?: () => void | Promise<void>;
     onExplorerRenameFile?: (path: string) => void;
     onExplorerDeleteFile?: (path: string) => void | Promise<void>;
@@ -47,7 +43,18 @@
   }>();
 
   let explorerOpen = $state(true);
-  let openEditorsOpen = $state(true);
+
+  /** Open-tab metadata by path (dirty dot + relative save time in explorer). */
+  let openFileMetaByPath = $derived.by(() => {
+    const m = new Map<
+      string,
+      { isDirty?: boolean; lastSaved?: Date | null }
+    >();
+    for (const f of openFiles) {
+      m.set(f.path, { isDirty: f.isDirty, lastSaved: f.lastSaved });
+    }
+    return m;
+  });
 
   /** `true` = folder row is collapsed (children hidden). */
   let collapsedByPath = $state<Record<string, boolean>>({});
@@ -146,73 +153,7 @@
 
 
   <div
-    class="flex flex-col min-h-0 {openEditorsOpen
-      ? 'flex-1 overflow-hidden'
-      : 'shrink-0'}"
-  >
-    <button
-      type="button"
-      onclick={() => (openEditorsOpen = !openEditorsOpen)}
-      class="shrink-0 flex items-center gap-1 px-2 py-1.5 bg-[var(--app-surface-toolbar)] hover:bg-[var(--app-surface-hover)] text-[10px] font-bold uppercase tracking-wider text-[var(--app-fg-secondary)] border-b border-[var(--app-border)]"
-    >
-      {#if openEditorsOpen}
-        <ChevronDown size={14} />
-      {:else}
-        <ChevronRight size={14} />
-      {/if}
-      Open Editors
-    </button>
-
-    {#if openEditorsOpen}
-      <div class="flex flex-1 min-h-0 flex-col overflow-y-auto py-0.5">
-        {#each openFiles as file}
-          <!-- svelte-ignore a11y_click_events_have_key_events -->
-          <!-- svelte-ignore a11y_no_static_element_interactions -->
-          <div
-            class="group flex items-center justify-between px-4 py-1 text-xs hover:bg-[var(--app-surface-hover)] cursor-pointer {activeFile === file.path
-              ? 'bg-[var(--app-surface-active)] text-[var(--app-active-fg)]'
-              : ''}"
-            onclick={() => onSelectFile(file.path)}
-          >
-            <div class="flex items-center gap-2 overflow-hidden flex-1">
-              <div class="relative">
-                <FileText
-                  size={14}
-                  class={activeFile === file.path ? "text-[var(--app-link)]" : "text-[var(--app-icon-muted)]"}
-                />
-                {#if file.isDirty}
-                  <div
-                    class="absolute -top-1 -right-1 w-2 h-2 bg-blue-500 rounded-full border-2 border-[var(--app-surface)]"
-                  ></div>
-                {/if}
-              </div>
-              <span class="truncate flex-1">{file.name}</span>
-              {#if file.lastSaved && !file.isDirty}
-                <span
-                  class="text-[9px] text-[var(--app-fg-muted)] whitespace-nowrap opacity-60 group-hover:opacity-100 transition-opacity"
-                >
-                  {formatRelativeTime(file.lastSaved)}
-                </span>
-              {/if}
-            </div>
-            <button
-              type="button"
-              onclick={(e) => {
-                e.stopPropagation();
-                onCloseFile(file.path);
-              }}
-              class="opacity-0 group-hover:opacity-100 p-0.5 hover:bg-[var(--app-surface-elevated)] rounded transition-opacity text-[var(--app-fg)]"
-            >
-              <X size={12} />
-            </button>
-          </div>
-        {/each}
-      </div>
-    {/if}
-  </div>
-
-  <div
-    class="flex flex-col min-h-0 border-t border-[var(--app-border)] {explorerOpen
+    class="flex flex-col min-h-0 {explorerOpen
       ? 'flex-1 overflow-hidden'
       : 'shrink-0'}"
   >
@@ -256,9 +197,12 @@
           </div>
         {:else}
           {#each explorerRows as item}
+            {@const tabMeta = item.isDirectory
+              ? undefined
+              : openFileMetaByPath.get(item.path)}
             <button
               type="button"
-              class="flex w-full items-center gap-1.5 py-0.5 pr-4 text-xs hover:bg-[var(--app-surface-hover)] cursor-pointer {activeFile === item.path
+              class="group flex w-full min-w-0 items-center gap-1.5 py-0.5 pr-2 text-xs hover:bg-[var(--app-surface-hover)] cursor-pointer {activeFile === item.path
                 ? 'bg-[var(--app-surface-active)] text-[var(--app-active-fg)]'
                 : 'text-[var(--app-fg-secondary)]'}"
               style:padding-left="{10 + item.depth * 14}px"
@@ -293,9 +237,29 @@
                 <Folder size={14} class="shrink-0 text-[var(--app-link)]" />
               {:else}
                 <span class="inline-block w-[14px] shrink-0" aria-hidden="true"></span>
-                <FileText size={14} class="shrink-0 text-[var(--app-icon-muted)]" />
+                <div class="relative shrink-0">
+                  <FileText
+                    size={14}
+                    class={activeFile === item.path
+                      ? "text-[var(--app-link)]"
+                      : "text-[var(--app-icon-muted)]"}
+                  />
+                  {#if tabMeta?.isDirty}
+                    <div
+                      class="absolute -top-1 -right-1 w-2 h-2 bg-blue-500 rounded-full border-2 border-[var(--app-surface)]"
+                      aria-hidden="true"
+                    ></div>
+                  {/if}
+                </div>
               {/if}
-              <span class="truncate text-left min-w-0">{item.name}</span>
+              <span class="truncate text-left min-w-0 flex-1">{item.name}</span>
+              {#if tabMeta?.lastSaved && !tabMeta?.isDirty}
+                <span
+                  class="shrink-0 text-[9px] text-[var(--app-fg-muted)] whitespace-nowrap opacity-60 group-hover:opacity-100 transition-opacity"
+                >
+                  {formatRelativeTime(tabMeta.lastSaved)}
+                </span>
+              {/if}
             </button>
           {/each}
         {/if}
