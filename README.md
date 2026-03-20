@@ -125,6 +125,7 @@ This project is released under the [MIT License](LICENSE).
 - [Typst](https://typst.app/) — typesetting engine and language  
 - [Tauri](https://tauri.app/) — secure, lightweight native apps  
 - [Monaco Editor](https://github.com/microsoft/monaco-editor) — the editor component  
+- [EmbedPDF](https://www.embedpdf.com/svelte-pdf-viewer) — in-app PDF viewing and editing ([`@embedpdf/svelte-pdf-viewer`](https://www.npmjs.com/package/@embedpdf/svelte-pdf-viewer))  
 
 <div align="center">
 
