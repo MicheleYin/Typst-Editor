@@ -18,7 +18,6 @@
     initialValue,
     languageId = "typst",
     readOnly = false,
-    appZoom,
     monacoTheme,
     onContentChange,
     onReady,
@@ -27,7 +26,6 @@
     initialValue: string;
     languageId?: string;
     readOnly?: boolean;
-    appZoom: number;
     monacoTheme: string;
     onContentChange: (value: string) => void;
     onReady: (editor: monaco.editor.IStandaloneCodeEditor) => void;
@@ -69,7 +67,7 @@
         theme: monacoTheme,
         readOnly,
         minimap: { enabled: false },
-        fontSize: 14 * appZoom,
+        fontSize: 14,
         wordWrap: "on",
         automaticLayout: true,
       });
@@ -102,13 +100,6 @@
       editorInstance = undefined;
       onDispose?.();
     };
-  });
-
-  $effect(() => {
-    const ed = editorInstance;
-    if (ed && appZoom) {
-      ed.updateOptions({ fontSize: 14 * appZoom });
-    }
   });
 
   $effect(() => {

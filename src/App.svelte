@@ -1991,15 +1991,23 @@
 
 
 <div
-  class="flex flex-col h-dvh max-h-dvh bg-[var(--app-bg)] text-[var(--app-fg)] overflow-hidden {isResizing ||
-  isResizingSidebar
+  class="h-dvh max-h-dvh w-full overflow-hidden bg-[var(--app-bg)] {isResizing || isResizingSidebar
     ? 'cursor-col-resize select-none'
     : ''}"
-  style:zoom={appZoom}
-  style:--app-zoom={appZoom}
-  style:min-width="{APP_MIN_WIDTH_PX}px"
-  style:min-height="{APP_MIN_HEIGHT_PX}px"
 >
+  <!-- Transform scale (not CSS zoom) so the whole shell scales in Firefox / all WebViews; Monaco stays 14px. -->
+  <div
+    class="flex flex-col text-[var(--app-fg)] overflow-hidden {isResizing || isResizingSidebar
+      ? 'cursor-col-resize select-none'
+      : ''}"
+    style:--app-zoom={appZoom}
+    style:width="calc(100% / var(--app-zoom))"
+    style:height="calc(100% / var(--app-zoom))"
+    style:transform={`scale(${appZoom})`}
+    style:transform-origin="top left"
+    style:min-width="calc({APP_MIN_WIDTH_PX}px / var(--app-zoom))"
+    style:min-height="calc({APP_MIN_HEIGHT_PX}px / var(--app-zoom))"
+  >
   <Header
     {appName}
     {showInAppMenu}
@@ -2330,7 +2338,6 @@
               initialValue={content}
               languageId={editorLanguageId}
               readOnly={isCurrentBinary}
-              {appZoom}
               monacoTheme={monacoThemeResolved}
               onContentChange={onEditorContentChange}
               onReady={(ed) => {
@@ -2382,6 +2389,7 @@
       {/if}
     </div>
     {/if}
+  </div>
   </div>
 </div>
 

@@ -67,10 +67,4 @@ body,
   }
 }
 
-/*
- * Root shell uses `zoom` for view zoom; nested zoom on Lucide SVGs inverts that so icon
- * stroke/size stays visually constant (icons use px width/height, not text em units).
- */
-.lucide-icon {
-  zoom: calc(1 / var(--app-zoom, 1));
-}
+/* View zoom is applied via transform scale on the app shell in App.svelte (--app-zoom for calcs). */
