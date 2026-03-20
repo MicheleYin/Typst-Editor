@@ -239,8 +239,10 @@
                 <span class="truncate text-left min-w-0 flex-1">{item.name}</span>
               </button>
             {:else}
+              {@const explorerRowActive =
+                activeFile === item.path || explorerFileMenu?.path === item.path}
               <div
-                class="group flex w-full min-w-0 items-center gap-0.5 py-0.5 pr-1 text-xs {activeFile === item.path
+                class="group flex w-full min-w-0 items-center gap-0.5 py-0.5 pr-1 text-xs {explorerRowActive
                   ? 'bg-[var(--app-surface-active)] text-[var(--app-active-fg)]'
                   : 'text-[var(--app-fg-secondary)] hover:bg-[var(--app-surface-hover)]'}"
                 style:padding-left="{10 + item.depth * 14}px"
@@ -260,7 +262,7 @@
                   <div class="relative shrink-0">
                     <FileText
                       size={14}
-                      class={activeFile === item.path
+                      class={explorerRowActive
                         ? "text-[var(--app-link)]"
                         : "text-[var(--app-icon-muted)]"}
                     />
@@ -283,7 +285,7 @@
                 {#if onExplorerRenameFile && onExplorerDeleteFile}
                   <button
                     type="button"
-                    class="shrink-0 rounded p-0.5 text-[var(--app-icon-muted)] hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-fg-secondary)] {activeFile === item.path
+                    class="shrink-0 rounded p-0.5 text-[var(--app-icon-muted)] hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-fg-secondary)] {explorerRowActive
                       ? 'hover:text-[var(--app-active-fg)]'
                       : ''}"
                     aria-label="File actions"
