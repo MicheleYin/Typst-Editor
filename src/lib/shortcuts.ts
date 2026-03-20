@@ -12,6 +12,8 @@ export const APP_COMMAND_IDS = new Set([
   'file.save',
   'file.saveAs',
   'file.exportTypst',
+  'edit.undo',
+  'edit.redo',
   'view.zoomIn',
   'view.zoomOut',
   'view.resetZoom',
@@ -28,6 +30,8 @@ const APP_SHORTCUT_LABELS: Record<string, { label: string; category: string }> =
   'file.save': { label: 'Save File', category: 'File' },
   'file.saveAs': { label: 'Save As', category: 'File' },
   'file.exportTypst': { label: 'Export…', category: 'File' },
+  'edit.undo': { label: 'Undo', category: 'Edit' },
+  'edit.redo': { label: 'Redo', category: 'Edit' },
   'view.zoomIn': { label: 'Zoom In', category: 'View' },
   'view.zoomOut': { label: 'Zoom Out', category: 'View' },
   'view.resetZoom': { label: 'Reset Zoom', category: 'View' },
@@ -45,6 +49,8 @@ export const APP_SHORTCUT_DEFAULT_KEYS: Record<string, string> = {
   'file.save': 'Mod+S',
   'file.saveAs': 'Mod+Shift+S',
   'file.exportTypst': 'Mod+Shift+E',
+  'edit.undo': 'Mod+Z',
+  'edit.redo': 'Mod+Shift+Z',
   'view.zoomIn': 'Mod+=',
   'view.zoomOut': 'Mod+-',
   'view.resetZoom': 'Mod+0',
@@ -321,6 +327,8 @@ export function menuShortcutLabel(
     'view-toggle-sidebar': 'view.toggleSidebar',
     'help-shortcuts': 'settings.shortcuts',
     'file-export-typst': 'file.exportTypst',
+    'edit-undo': 'edit.undo',
+    'edit-redo': 'edit.redo',
   };
   const appKey = appMap[menuId];
   if (appKey) {
@@ -328,8 +336,6 @@ export function menuShortcutLabel(
     if (raw) return formatKeys(normalizeKeySpec(raw));
   }
   const fixed: Record<string, string> = {
-    'edit-undo': 'Mod+Z',
-    'edit-redo': 'Mod+Shift+Z',
     'edit-cut': 'Mod+X',
     'edit-copy': 'Mod+C',
     'edit-paste': 'Mod+V',
@@ -656,7 +662,10 @@ export function syncAppShortcuts(
 
   const onKey = (e: KeyboardEvent) => {
     const t = e.target as HTMLElement | null;
-    if (ignoreTarget(t)) return;
+    const inPdfSurface = e.composedPath().some(
+      (n) => n instanceof HTMLElement && n.classList.contains('app-embed-pdf'),
+    );
+    if (!inPdfSurface && ignoreTarget(t)) return;
 
     if (chordWait) {
       const matched = chordWait.candidates.filter((c) =>

@@ -241,6 +241,66 @@
     );
   }
 
+  /** Blob preview URLs on iOS do not track disk writes; reload after save so reopen/switch-tab sees updates. */
+  async function refreshPdfAssetPreviewUrl(absPath: string) {
+    const tab = openFiles.find((f) => f.path === absPath && f.assetKind === "pdf");
+    if (!tab?.assetUrl) return;
+    const preview = await createAssetPreviewUrl(absPath, projectsUseDocumentDir);
+    const assetUrl = preview?.url;
+    if (!assetUrl) return;
+    revokeAssetPreviewUrl(tab.assetUrl);
+    openFiles = openFiles.map((f) =>
+      f.path === absPath ? { ...f, assetUrl } : f,
+    );
+  }
+
+  /**
+   * EmbedPDF keeps edits in the mounted viewer. Text tabs keep unsaved work in `openFiles[].content`;
+   * when leaving a dirty PDF for another tab, persist the annotated PDF into a new blob on the tab
+   * so the viewer can reload from that memory (disk is unchanged until Save).
+   */
+  async function snapshotCurrentPdfBeforeLeaving(nextPath: string | null) {
+    const prev = currentFilePath;
+    if (prev == null) return;
+    if (nextPath !== null && prev === nextPath) return;
+    const tab = openFiles.find((f) => f.path === prev);
+    if (!tab?.isBinary || tab.assetKind !== "pdf" || !tab.isDirty) return;
+    if (!pdfDiskSaveApi) return;
+    try {
+      const buf = await pdfDiskSaveApi.saveToBuffer();
+      revokeAssetPreviewUrl(tab.assetUrl);
+      const blob = new Blob([new Uint8Array(buf)], { type: "application/pdf" });
+      const assetUrl = URL.createObjectURL(blob);
+      openFiles = openFiles.map((f) =>
+        f.path === prev ? { ...f, assetUrl } : f,
+      );
+    } catch (e) {
+      console.error("snapshotCurrentPdfBeforeLeaving:", e);
+    }
+  }
+
+  function runEditUndo() {
+    const tab = currentTab;
+    if (tab?.assetKind === "pdf" && pdfDiskSaveApi) {
+      pdfDiskSaveApi.undo();
+      return;
+    }
+    const ed = monacoMenuRef.current;
+    ed?.focus();
+    ed?.trigger("keyboard", "undo", null);
+  }
+
+  function runEditRedo() {
+    const tab = currentTab;
+    if (tab?.assetKind === "pdf" && pdfDiskSaveApi) {
+      pdfDiskSaveApi.redo();
+      return;
+    }
+    const ed = monacoMenuRef.current;
+    ed?.focus();
+    ed?.trigger("keyboard", "redo", null);
+  }
+
   function handlePdfDiskApiReady(api: EmbedPdfDiskSaveApi | null) {
     pdfDiskSaveApi = api;
   }
@@ -325,6 +385,7 @@
             },
           ];
         }
+        await snapshotCurrentPdfBeforeLeaving(selected);
         currentFilePath = selected;
         content = initial;
         editor?.setValue(initial);
@@ -371,12 +432,14 @@
             : f,
         );
       }
+      await snapshotCurrentPdfBeforeLeaving(null);
       currentFilePath = null;
       content = defaultNewFileContent(appName);
       editor?.setValue(content);
       if (currentFolder) void loadFolderFiles(currentFolder);
       touchProjectMetaUpdated();
     } else {
+      await snapshotCurrentPdfBeforeLeaving(selected);
       currentFilePath = selected;
       const name = base;
       if (openFiles.find((f) => f.path === selected)) {
@@ -726,6 +789,7 @@
 
   async function openFileByPath(path: string) {
     try {
+      await snapshotCurrentPdfBeforeLeaving(path);
       const existing = openFiles.find((f) => f.path === path);
       if (existing) {
         content = existing.content;
@@ -1234,6 +1298,7 @@
             ? { ...f, isDirty: false, lastSaved: new Date() }
             : f,
         );
+        await refreshPdfAssetPreviewUrl(currentFilePath);
         error = "";
         touchProjectMetaUpdated();
       } catch (err) {
@@ -1747,6 +1812,12 @@
       case "settings.shortcuts":
         openSettings("shortcuts");
         break;
+      case "edit.undo":
+        runEditUndo();
+        break;
+      case "edit.redo":
+        runEditRedo();
+        break;
     }
   }
 
@@ -1835,18 +1906,12 @@
         });
         break;
       }
-      case "edit-undo": {
-        const ed = monacoMenuRef.current;
-        ed?.focus();
-        ed?.trigger("keyboard", "undo", null);
+      case "edit-undo":
+        runEditUndo();
         break;
-      }
-      case "edit-redo": {
-        const ed = monacoMenuRef.current;
-        ed?.focus();
-        ed?.trigger("keyboard", "redo", null);
+      case "edit-redo":
+        runEditRedo();
         break;
-      }
       case "edit-cut": {
         const ed = monacoMenuRef.current;
         ed?.focus();
@@ -1966,7 +2031,6 @@
   });
 
   $effect(() => {
-    if (!editor) return;
     const o = $shortcutOverrides;
     syncAppShortcuts(o, {
       "file.new": () => handleShortcutCommand("file.new"),
@@ -1975,6 +2039,8 @@
       "file.save": handleSave,
       "file.saveAs": handleSaveAs,
       "file.exportTypst": openExportTypstModal,
+      "edit.undo": runEditUndo,
+      "edit.redo": runEditRedo,
       "view.zoomIn": appZoomIn,
       "view.zoomOut": appZoomOut,
       "view.resetZoom": resetAppZoom,
@@ -1985,7 +2051,11 @@
       "view.prevPage": prevPage,
       "settings.shortcuts": () => openSettings("shortcuts"),
     });
-    applyMonacoShortcutOverrides(editor, monaco, o);
+  });
+
+  $effect(() => {
+    if (!editor) return;
+    applyMonacoShortcutOverrides(editor, monaco, $shortcutOverrides);
   });
 </script>
 

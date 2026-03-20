@@ -59,7 +59,9 @@
   });
 </script>
 
-<div class="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-[var(--app-bg)]">
+<div
+  class="app-embed-pdf flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-[var(--app-bg)]"
+>
   {#if PdfViewer}
     {#key `${src}|${appearance}`}
       <PdfViewer

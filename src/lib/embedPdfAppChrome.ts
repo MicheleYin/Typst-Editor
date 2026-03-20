@@ -5,6 +5,7 @@ import type {
   DocumentManagerPlugin,
   ExportPlugin,
   GroupItem,
+  HistoryPlugin,
   PluginRegistry,
   ThemeColors,
   ThemeConfig,
@@ -108,6 +109,8 @@ export function removeEmbedPdfDocumentMenuButton(registry: PluginRegistry): void
 /** Serialize the current in-memory PDF (including committed annotations) for disk write. */
 export type EmbedPdfDiskSaveApi = {
   saveToBuffer: () => Promise<ArrayBuffer>;
+  undo: () => void;
+  redo: () => void;
 };
 
 /**
@@ -145,6 +148,12 @@ export function wireEmbedPdfProjectIntegration(
       const id = dm?.getActiveDocumentId();
       if (!id || !exp) throw new Error("PDF engine is not ready.");
       return exp.forDocument(id).saveAsCopy().toPromise();
+    },
+    undo() {
+      registry.getPlugin<HistoryPlugin>("history")?.provides()?.undo();
+    },
+    redo() {
+      registry.getPlugin<HistoryPlugin>("history")?.provides()?.redo();
     },
   };
   opts.onDiskApiReady?.(api);
