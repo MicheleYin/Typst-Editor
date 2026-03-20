@@ -115,6 +115,8 @@
     isBinary?: boolean;
     assetUrl?: string;
     assetKind?: "image" | "pdf";
+    /** iOS blob URL is stale after Save until refreshed; defer refresh so the viewer is not remounted (preserves undo). */
+    pdfPreviewNeedsDiskSync?: boolean;
   };
   let openFiles = $state<OpenEditorTab[]>([]);
   /** EmbedPDF export handle while a PDF tab’s viewer is mounted. */
@@ -250,7 +252,7 @@
     if (!assetUrl) return;
     revokeAssetPreviewUrl(tab.assetUrl);
     openFiles = openFiles.map((f) =>
-      f.path === absPath ? { ...f, assetUrl } : f,
+      f.path === absPath ? { ...f, assetUrl, pdfPreviewNeedsDiskSync: false } : f,
     );
   }
 
@@ -258,24 +260,33 @@
    * EmbedPDF keeps edits in the mounted viewer. Text tabs keep unsaved work in `openFiles[].content`;
    * when leaving a dirty PDF for another tab, persist the annotated PDF into a new blob on the tab
    * so the viewer can reload from that memory (disk is unchanged until Save).
+   * When leaving a saved PDF whose blob still needs a disk resync (iOS), refresh then so the next open is correct.
    */
   async function snapshotCurrentPdfBeforeLeaving(nextPath: string | null) {
     const prev = currentFilePath;
     if (prev == null) return;
     if (nextPath !== null && prev === nextPath) return;
     const tab = openFiles.find((f) => f.path === prev);
-    if (!tab?.isBinary || tab.assetKind !== "pdf" || !tab.isDirty) return;
-    if (!pdfDiskSaveApi) return;
-    try {
-      const buf = await pdfDiskSaveApi.saveToBuffer();
-      revokeAssetPreviewUrl(tab.assetUrl);
-      const blob = new Blob([new Uint8Array(buf)], { type: "application/pdf" });
-      const assetUrl = URL.createObjectURL(blob);
-      openFiles = openFiles.map((f) =>
-        f.path === prev ? { ...f, assetUrl } : f,
-      );
-    } catch (e) {
-      console.error("snapshotCurrentPdfBeforeLeaving:", e);
+    if (!tab?.isBinary || tab.assetKind !== "pdf") return;
+
+    if (tab.isDirty) {
+      if (!pdfDiskSaveApi) return;
+      try {
+        const buf = await pdfDiskSaveApi.saveToBuffer();
+        revokeAssetPreviewUrl(tab.assetUrl);
+        const blob = new Blob([new Uint8Array(buf)], { type: "application/pdf" });
+        const assetUrl = URL.createObjectURL(blob);
+        openFiles = openFiles.map((f) =>
+          f.path === prev ? { ...f, assetUrl, pdfPreviewNeedsDiskSync: false } : f,
+        );
+      } catch (e) {
+        console.error("snapshotCurrentPdfBeforeLeaving:", e);
+      }
+      return;
+    }
+
+    if (tab.pdfPreviewNeedsDiskSync) {
+      await refreshPdfAssetPreviewUrl(prev);
     }
   }
 
@@ -790,7 +801,11 @@
   async function openFileByPath(path: string) {
     try {
       await snapshotCurrentPdfBeforeLeaving(path);
-      const existing = openFiles.find((f) => f.path === path);
+      let existing = openFiles.find((f) => f.path === path);
+      if (existing?.assetKind === "pdf" && existing.pdfPreviewNeedsDiskSync) {
+        await refreshPdfAssetPreviewUrl(path);
+        existing = openFiles.find((f) => f.path === path);
+      }
       if (existing) {
         content = existing.content;
         currentFilePath = path;
@@ -1308,10 +1323,14 @@
         await writeBinaryFileAtPath(currentFilePath, new Uint8Array(buf));
         openFiles = openFiles.map((f) =>
           f.path === currentFilePath
-            ? { ...f, isDirty: false, lastSaved: new Date() }
+            ? {
+                ...f,
+                isDirty: false,
+                lastSaved: new Date(),
+                pdfPreviewNeedsDiskSync: true,
+              }
             : f,
         );
-        await refreshPdfAssetPreviewUrl(currentFilePath);
         error = "";
         touchProjectMetaUpdated();
       } catch (err) {
@@ -1378,6 +1397,7 @@
                 assetUrl,
                 isDirty: false,
                 lastSaved: new Date(),
+                pdfPreviewNeedsDiskSync: false,
               }
             : f,
         );
