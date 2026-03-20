@@ -163,6 +163,27 @@
     }
   }
 
+  /** Append `.typ` only when the leaf name has no extension (any explicit extension is kept). */
+  function ensureDefaultTypstExtension(fileName: string): string {
+    const leaf = fileName.split(/[/\\]/).pop() ?? fileName;
+    const dot = leaf.lastIndexOf(".");
+    if (dot > 0 && dot < leaf.length - 1) return fileName;
+    return fileName.toLowerCase().endsWith(".typ") ? fileName : `${fileName}.typ`;
+  }
+
+  /** If `fileName` is already taken, return `stem-2.ext`, `stem-3.ext`, … preserving extension. */
+  function nextNonCollidingFileName(fileName: string, nameSet: Set<string>): string {
+    if (!nameSet.has(fileName)) return fileName;
+    const leaf = fileName.split(/[/\\]/).pop() ?? fileName;
+    const lastDot = leaf.lastIndexOf(".");
+    const hasExt = lastDot > 0 && lastDot < leaf.length - 1;
+    const stem = hasExt ? leaf.slice(0, lastDot) : leaf;
+    const ext = hasExt ? leaf.slice(lastDot) : ".typ";
+    let n = 2;
+    while (nameSet.has(`${stem}-${n}${ext}`)) n += 1;
+    return `${stem}-${n}${ext}`;
+  }
+
   /** Write: iOS sandbox via plugin-fs; desktop project folders via Rust. */
   async function writeFileAtPath(absPath: string, data: string): Promise<void> {
     if (!projectsUseDocumentDir) {
@@ -256,10 +277,10 @@
       error = "Enter a file name.";
       return;
     }
-    if (!base.endsWith(".typ")) base = `${base}.typ`;
+    base = ensureDefaultTypstExtension(base);
     const intent = saveAsIntent;
 
-    /** Inside an iOS project, New File creates a new .typ on disk immediately (template). */
+    /** Inside an iOS project, New File creates a new file on disk immediately (template). */
     if (
       intent === "newFile" &&
       iosProjectPath &&
@@ -273,13 +294,7 @@
         const nameSet = new Set(
           entries.map((e) => e.name).filter(Boolean) as string[],
         );
-        let fileName = base;
-        if (nameSet.has(fileName)) {
-          const stem = fileName.replace(/\.typ$/i, "");
-          let n = 2;
-          while (nameSet.has(`${stem}-${n}.typ`)) n += 1;
-          fileName = `${stem}-${n}.typ`;
-        }
+        const fileName = nextNonCollidingFileName(base, nameSet);
         const selected = await join(iosProjectPath, fileName);
         const initial = defaultNewFileContent(appName);
         await writeFileAtPath(selected, initial);
@@ -2063,8 +2078,9 @@
         </h2>
         <p class="text-sm text-[var(--app-fg-secondary)]">
           {#if saveAsIntent === "newFile" && iosProjectPath}
-            Creates a new .typ in this project and saves it immediately. Your current file is
-            saved first if it has unsaved changes.
+            Creates a new file in this project and saves it immediately. Your current file is
+            saved first if it has unsaved changes. Add <code class="text-[10px]">.typ</code> or
+            another extension in the name; bare names get <code class="text-[10px]">.typ</code>.
           {:else if iosProjectPath}
             Saved inside project “{iosProjectTitle}” (app Documents only).
           {:else}
