@@ -1285,6 +1285,19 @@
     const tab = currentFilePath
       ? openFiles.find((f) => f.path === currentFilePath)
       : undefined;
+
+    // Global shortcuts run in capture phase; flush Monaco before writing so disk matches the editor (iPad/WebKit timing).
+    const edFlush = monacoMenuRef.current;
+    if (edFlush && tab && !tab.isBinary && currentFilePath) {
+      const live = edFlush.getValue();
+      if (live !== content) {
+        content = live;
+        openFiles = openFiles.map((f) =>
+          f.path === currentFilePath ? { ...f, content: live, isDirty: true } : f,
+        );
+      }
+    }
+
     if (tab?.isBinary && tab.assetKind === "pdf" && currentFilePath) {
       if (!pdfDiskSaveApi) {
         error = "PDF viewer is still loading. Try Save again in a moment.";
@@ -2032,6 +2045,7 @@
 
   $effect(() => {
     const o = $shortcutOverrides;
+    void editor;
     syncAppShortcuts(o, {
       "file.new": () => handleShortcutCommand("file.new"),
       "file.open": handleOpenFile,

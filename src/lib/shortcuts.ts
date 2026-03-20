@@ -64,6 +64,23 @@ function isMacOS(): boolean {
   return /Mac/i.test(navigator.userAgent || navigator.platform || '');
 }
 
+/**
+ * iPadOS (and some iOS WebViews) report a Mac-like UA/platform so sites get “desktop” layouts,
+ * but hardware keyboards usually send **Ctrl** for shortcuts users think of as “Ctrl+S”.
+ * Treat Mod as ⌘ **or** Ctrl here; real Macs keep ⌘-only.
+ */
+function isIPadOrIOSWithMacLikePlatform(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  if (/iPad/i.test(navigator.userAgent || '')) return true;
+  const mp = navigator.maxTouchPoints ?? 0;
+  if (mp > 1 && navigator.platform === 'MacIntel') return true;
+  return false;
+}
+
+function useMacMetaOnlyForMod(): boolean {
+  return isMacOS() && !isIPadOrIOSWithMacLikePlatform();
+}
+
 /** Encode VS Code chord → monaco keybinding int (matches parseKeybinding). */
 function chordToMonacoInt(chord: {
   ctrlKey: boolean;
@@ -104,7 +121,6 @@ export function normalizeKeySpec(spec: string): string {
 /** Match keydown against our display spec: "Mod+S", "Mod+Shift+O", "Right", "Mod+," */
 export function matchesDisplayKeys(e: KeyboardEvent, spec: string): boolean {
   const specN = normalizeKeySpec(spec);
-  const isMac = isMacOS();
   const parts = specN.split('+').map((p) => p.trim());
   let wantMod = false;
   let wantShift = false;
@@ -119,7 +135,13 @@ export function matchesDisplayKeys(e: KeyboardEvent, spec: string): boolean {
   const keyToken = keys.join('+');
 
   if (wantMod) {
-    if (isMac ? !e.metaKey : !e.ctrlKey) return false;
+    if (useMacMetaOnlyForMod()) {
+      if (!e.metaKey) return false;
+    } else if (isIPadOrIOSWithMacLikePlatform()) {
+      if (!e.metaKey && !e.ctrlKey) return false;
+    } else {
+      if (!e.ctrlKey) return false;
+    }
   } else {
     if (e.metaKey || e.ctrlKey) return false;
   }
@@ -601,11 +623,16 @@ export function discoverMonacoActions(editor: any) {
 let appShortcutDisposers: (() => void)[] = [];
 let monacoOverrideDisposable: { dispose: () => void } | null = null;
 
+/** Only clears Monaco `addKeybindingRules` overrides — does not remove app `syncAppShortcuts` listeners. */
+export function disposeMonacoShortcutOverridesOnly() {
+  monacoOverrideDisposable?.dispose();
+  monacoOverrideDisposable = null;
+}
+
 export function disposeAllShortcutBindings() {
   appShortcutDisposers.forEach((d) => d());
   appShortcutDisposers = [];
-  monacoOverrideDisposable?.dispose();
-  monacoOverrideDisposable = null;
+  disposeMonacoShortcutOverridesOnly();
 }
 
 const CHORD_WAIT_MS = 5000;

@@ -266,6 +266,7 @@
 					"\".\"",
 				);
 				INFOPLIST_FILE = "typst-editor_iOS/Info.plist";
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -366,6 +367,7 @@
 					"\".\"",
 				);
 				INFOPLIST_FILE = "typst-editor_iOS/Info.plist";
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",

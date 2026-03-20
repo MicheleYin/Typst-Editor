@@ -5,7 +5,7 @@
   import {
     discoverMonacoActions,
     ensureAppShortcutMetadataInStore,
-    disposeAllShortcutBindings,
+    disposeMonacoShortcutOverridesOnly,
   } from "../lib/shortcuts";
   import {
     MONACO_CAT_LIGHT,
@@ -95,7 +95,7 @@
 
     return () => {
       cancelled = true;
-      disposeAllShortcutBindings();
+      disposeMonacoShortcutOverridesOnly();
       ed?.dispose();
       editorInstance = undefined;
       onDispose?.();
