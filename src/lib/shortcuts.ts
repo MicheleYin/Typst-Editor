@@ -64,23 +64,6 @@ function isMacOS(): boolean {
   return /Mac/i.test(navigator.userAgent || navigator.platform || '');
 }
 
-/**
- * iPadOS (and some iOS WebViews) report a Mac-like UA/platform so sites get “desktop” layouts,
- * but hardware keyboards usually send **Ctrl** for shortcuts users think of as “Ctrl+S”.
- * Treat Mod as ⌘ **or** Ctrl here; real Macs keep ⌘-only.
- */
-function isIPadOrIOSWithMacLikePlatform(): boolean {
-  if (typeof navigator === 'undefined') return false;
-  if (/iPad/i.test(navigator.userAgent || '')) return true;
-  const mp = navigator.maxTouchPoints ?? 0;
-  if (mp > 1 && navigator.platform === 'MacIntel') return true;
-  return false;
-}
-
-function useMacMetaOnlyForMod(): boolean {
-  return isMacOS() && !isIPadOrIOSWithMacLikePlatform();
-}
-
 /** Encode VS Code chord → monaco keybinding int (matches parseKeybinding). */
 function chordToMonacoInt(chord: {
   ctrlKey: boolean;
@@ -135,10 +118,10 @@ export function matchesDisplayKeys(e: KeyboardEvent, spec: string): boolean {
   const keyToken = keys.join('+');
 
   if (wantMod) {
-    if (useMacMetaOnlyForMod()) {
+    // Mac and iPad (desktop-class UA) use ⌘ for Mod — do not also accept Ctrl, or users get
+    // duplicate zoom (in-app Mod+/- and browser Ctrl+/-) and shortcuts diverge from the ⌘ labels.
+    if (isMacOS()) {
       if (!e.metaKey) return false;
-    } else if (isIPadOrIOSWithMacLikePlatform()) {
-      if (!e.metaKey && !e.ctrlKey) return false;
     } else {
       if (!e.ctrlKey) return false;
     }
