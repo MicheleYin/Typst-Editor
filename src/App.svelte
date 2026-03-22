@@ -3,7 +3,6 @@
   import { invoke } from "@tauri-apps/api/core";
   import * as monaco from "monaco-editor";
   import { listen } from "@tauri-apps/api/event";
-  import { GripVertical } from "lucide-svelte";
   import { open, save, message, ask } from "@tauri-apps/plugin-dialog";
   import {
     readTextFile,
@@ -21,8 +20,11 @@
   import Sidebar from "./components/Sidebar.svelte";
   import SettingsModal from "./components/SettingsModal.svelte";
   import IosProjectHub from "./components/IosProjectHub.svelte";
-  import FilePreviewPane from "./components/FilePreviewPane.svelte";
-  import MonacoEditorPane from "./components/MonacoEditorPane.svelte";
+  import EditorPreviewSplit from "./components/EditorPreviewSplit.svelte";
+  import SaveAsModal from "./components/SaveAsModal.svelte";
+  import ExplorerRenameModal from "./components/ExplorerRenameModal.svelte";
+  import IosImportZipProjectModal from "./components/IosImportZipProjectModal.svelte";
+  import PaneResizeGrip from "./components/PaneResizeGrip.svelte";
   import {
     monacoLanguageIdFromPath,
     isBinaryAssetPath,
@@ -41,7 +43,6 @@
     revokeAssetPreviewUrl,
   } from "./lib/assetPreviewUrl";
   import type { EmbedPdfDiskSaveApi } from "./lib/embedPdfAppChrome";
-  import EditorQuickActions from "./components/EditorQuickActions.svelte";
   import {
     syncAppShortcuts,
     applyMonacoShortcutOverrides,
@@ -2095,13 +2096,13 @@
 
 
 <div
-  class="h-dvh max-h-dvh w-full overflow-clip bg-[var(--app-bg)] {isResizing || isResizingSidebar
+  class="h-full max-h-full w-full overflow-clip bg-red {isResizing || isResizingSidebar
     ? 'cursor-col-resize select-none'
     : ''}"
 >
   <!-- Transform scale (not CSS zoom) so the whole shell scales in Firefox / all WebViews; Monaco stays 14px. -->
   <div
-    class="flex flex-col text-[var(--app-fg)] overflow-clip {isResizing || isResizingSidebar
+    class="h-full max-h-full  flex flex-col text-[var(--app-fg)] overflow-clip {isResizing || isResizingSidebar
       ? 'cursor-col-resize select-none'
       : ''}"
     style:--app-zoom={appZoom}
@@ -2137,7 +2138,7 @@
     onTogglePreview={() => (previewVisible = !previewVisible)}
     suppressPreviewToggle={isPreviewOnlyMedia}
     showExportTypst={exportTypstAllowed}
-    exportTypstEnabled={exportTypstAllowed}
+    // exportTypstEnabled={exportTypstAllowed}
     {exportBusy}
     onOpenExportTypst={openExportTypstModal}
     onShowCommandPalette={!isProjectHub
@@ -2166,185 +2167,37 @@
     onConfirm={handleExportTypstPayload}
   />
 
-  {#if saveAsModalOpen}
-    <!-- svelte-ignore a11y_click_events_have_key_events -->
-    <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <div
-      class="fixed inset-0 z-[400] flex items-end justify-center sm:items-center p-4 bg-black/50"
-      onclick={() => closeSaveAsModal()}
-      role="presentation"
-    >
-      <div
-        class="w-full max-w-md rounded-xl border border-[var(--app-border)] bg-[var(--app-bg)] shadow-xl p-4 space-y-4"
-        role="dialog"
-        aria-labelledby="save-as-title"
-        tabindex="0"
-        onclick={(e) => e.stopPropagation()}
-      >
-        <h2 id="save-as-title" class="text-lg font-semibold text-[var(--app-fg)]">
-          {saveAsIntent === "newFile" && iosProjectPath
-            ? "New file"
-            : saveAsIntent === "newFile"
-              ? "Save document as…"
-              : "Save as…"}
-        </h2>
-        <p class="text-sm text-[var(--app-fg-secondary)]">
-          {#if saveAsIntent === "newFile" && iosProjectPath}
-            Creates a new file in this project and saves it immediately. Your current file is
-            saved first if it has unsaved changes. Add <code class="text-[10px]">.typ</code> or
-            another extension in the name; bare names get <code class="text-[10px]">.typ</code>.
-          {:else if iosProjectPath}
-            Saved inside project “{iosProjectTitle}” (app Documents only).
-          {:else}
-            File name in app Documents (shown in Files → On My iPhone → {appName})
-          {/if}
-        </p>
-        <input
-          type="text"
-          bind:value={saveAsFilename}
-          class="w-full rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-elevated)] px-3 py-2.5 text-[var(--app-fg)] text-base"
-          placeholder="untitled.typ"
-          autocomplete="off"
-          autocapitalize="off"
-          enterkeyhint="done"
-        />
-        <div class="flex justify-end gap-2 pt-2">
-          <button
-            type="button"
-            class="px-4 py-2 rounded-lg text-sm font-medium text-[var(--app-fg-secondary)] hover:bg-[var(--app-btn-ghost-hover)]"
-            onclick={() => closeSaveAsModal()}
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            class="px-4 py-2 rounded-lg text-sm font-semibold bg-blue-600 hover:bg-blue-500 text-white"
-            onclick={() => void confirmSaveAsModal()}
-          >
-            Save
-          </button>
-        </div>
-      </div>
-    </div>
-  {/if}
+  <SaveAsModal
+    open={saveAsModalOpen}
+    intent={saveAsIntent}
+    iosProjectPath={iosProjectPath}
+    iosProjectTitle={iosProjectTitle}
+    {appName}
+    bind:filename={saveAsFilename}
+    onClose={closeSaveAsModal}
+    onConfirm={confirmSaveAsModal}
+  />
 
-  {#if explorerRenameModalOpen && explorerRenameFromPath}
-    <!-- svelte-ignore a11y_click_events_have_key_events -->
-    <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <div
-      class="fixed inset-0 z-[400] flex items-end justify-center sm:items-center p-4 bg-black/50"
-      onclick={() => closeExplorerRenameModal()}
-      role="presentation"
-    >
-      <div
-        class="w-full max-w-md rounded-xl border border-[var(--app-border)] bg-[var(--app-bg)] shadow-xl p-4 space-y-4"
-        role="dialog"
-        aria-labelledby="explorer-rename-title"
-        tabindex="0"
-        onclick={(e) => e.stopPropagation()}
-      >
-        <h2 id="explorer-rename-title" class="text-lg font-semibold text-[var(--app-fg)]">
-          Rename file
-        </h2>
-        <p class="text-sm text-[var(--app-fg-secondary)]">
-          New name in the same folder (include the extension, e.g. <code class="text-[10px]">.typ</code>).
-        </p>
-        <input
-          type="text"
-          bind:value={explorerRenameNewName}
-          class="w-full rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-elevated)] px-3 py-2.5 text-[var(--app-fg)] text-base"
-          autocomplete="off"
-          autocapitalize="off"
-          enterkeyhint="done"
-          onkeydown={(e) => e.key === "Enter" && void confirmExplorerRenameModal()}
-        />
-        {#if explorerRenameError}
-          <p class="text-sm text-red-600 dark:text-red-400" role="alert">
-            {explorerRenameError}
-          </p>
-        {/if}
-        <div class="flex justify-end gap-2 pt-2">
-          <button
-            type="button"
-            class="px-4 py-2 rounded-lg text-sm font-medium text-[var(--app-fg-secondary)] hover:bg-[var(--app-btn-ghost-hover)]"
-            onclick={() => closeExplorerRenameModal()}
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            class="px-4 py-2 rounded-lg text-sm font-semibold bg-blue-600 hover:bg-blue-500 text-white"
-            onclick={() => void confirmExplorerRenameModal()}
-          >
-            Rename
-          </button>
-        </div>
-      </div>
-    </div>
-  {/if}
+  <ExplorerRenameModal
+    open={explorerRenameModalOpen}
+    fromPath={explorerRenameFromPath}
+    bind:newName={explorerRenameNewName}
+    error={explorerRenameError}
+    onClose={closeExplorerRenameModal}
+    onConfirm={confirmExplorerRenameModal}
+  />
 
-  {#if iosImportFolderOpen}
-    <!-- svelte-ignore a11y_click_events_have_key_events -->
-    <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <div
-      class="fixed inset-0 z-[400] flex items-end sm:items-center justify-center p-4 bg-black/50"
-      onclick={() => {
-        iosImportFolderOpen = false;
-        iosImportFolderPath = null;
-        iosImportFolderError = "";
-      }}
-      role="presentation"
-    >
-      <div
-        class="w-full max-w-md rounded-xl border border-[var(--app-border)] bg-[var(--app-bg)] shadow-xl p-4 space-y-4"
-        role="dialog"
-        aria-labelledby="import-folder-title"
-        tabindex="0"
-        onclick={(e) => e.stopPropagation()}
-      >
-        <h2 id="import-folder-title" class="text-lg font-semibold text-[var(--app-fg)]">
-          Import project from ZIP
-        </h2>
-        <p class="text-xs text-[var(--app-fg-secondary)]">
-          The archive is extracted into a new project (.git, node_modules, etc. skipped). A single
-          top-level folder in the ZIP is stripped. Missing
-          <code class="text-[10px]">main.typ</code> is added.
-        </p>
-        <input
-          type="text"
-          bind:value={iosImportFolderTitle}
-          placeholder="Project title"
-          class="w-full rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-elevated)] px-3 py-2.5 text-[var(--app-fg)] text-base"
-          autocomplete="off"
-        />
-        {#if iosImportFolderError}
-          <p class="text-sm text-red-600 dark:text-red-400" role="alert">
-            {iosImportFolderError}
-          </p>
-        {/if}
-        <div class="flex justify-end gap-2">
-          <button
-            type="button"
-            class="px-4 py-2 rounded-lg text-sm text-[var(--app-fg-secondary)]"
-            onclick={() => {
-              iosImportFolderOpen = false;
-              iosImportFolderPath = null;
-              iosImportFolderError = "";
-            }}
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            class="px-4 py-2 rounded-lg text-sm font-semibold bg-blue-600 text-white"
-            onclick={() => void iosConfirmImportFolderAsProject()}
-          >
-            Import
-          </button>
-        </div>
-      </div>
-    </div>
-  {/if}
+  <IosImportZipProjectModal
+    open={iosImportFolderOpen}
+    bind:title={iosImportFolderTitle}
+    error={iosImportFolderError}
+    onClose={() => {
+      iosImportFolderOpen = false;
+      iosImportFolderPath = null;
+      iosImportFolderError = "";
+    }}
+    onImport={iosConfirmImportFolderAsProject}
+  />
 
   <div
     bind:this={mainLayout}
@@ -2380,118 +2233,49 @@
         iosProjectTitle={iosProjectPath ? iosProjectTitle : null}
         onIosBackToProjects={() => void leaveIosProject()}
       />
-      <!-- svelte-ignore a11y_no_static_element_interactions -->
-      <div
-        onpointerdown={handleSidebarGripPointerDown}
-        class="resize-grip-host touch-none shrink-0 z-10 relative group flex w-2 items-stretch justify-center cursor-col-resize"
+      <PaneResizeGrip
+        active={isResizingSidebar}
+        onPointerDown={handleSidebarGripPointerDown}
+        ariaLabel="Resize sidebar"
         title="Drag to resize sidebar"
-        role="separator"
-        aria-orientation="vertical"
-        aria-label="Resize sidebar"
-      >
-        <div
-          class="w-px self-stretch min-h-[120px] max-h-[80vh] my-auto rounded-full transition-colors bg-[var(--app-grip)] hover:bg-[var(--app-grip-hover)] {isResizingSidebar
-            ? 'bg-[var(--app-grip-active)]'
-            : ''}"
-        ></div>
-        <div
-          class="resize-grip-hint pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 h-10 w-6 flex items-center justify-center rounded-md bg-[var(--app-bg)] border border-[var(--app-border)]"
-        >
-          <GripVertical size={16} class="text-[var(--app-icon-muted)]" />
-        </div>
-      </div>
+      />
     {/if}
 
-    <div
-      bind:this={editorPreviewRegion}
-      class="flex-1 min-h-0 min-w-0 {isPreviewOnlyMedia
-        ? 'flex'
-        : previewVisible
-          ? 'grid'
-          : 'flex'}"
-      style:grid-template-columns={!isPreviewOnlyMedia && previewVisible
-        ? `minmax(${EDITOR_PANE_MIN}px, ${Math.max(1, Math.round(splitRatio * 1000))}fr) ${SPLIT_GRIP_PX}px minmax(${PREVIEW_PANE_MIN}px, ${Math.max(1, Math.round((1 - splitRatio) * 1000))}fr)`
-        : undefined}
-    >
-      {#if isPreviewOnlyMedia}
-        <div class="h-full flex flex-col min-w-0 min-h-0 flex-1 overflow-hidden">
-          <FilePreviewPane
-            mode={filePreviewMode}
-            appAppearance={resolvedAppearance}
-            onPdfDirty={markCurrentPdfDirty}
-            onPdfDiskApiReady={handlePdfDiskApiReady}
-            bind:currentPage
-            bind:scale
-            bind:translateX
-            bind:translateY
-          />
-        </div>
-      {:else}
-        <div
-          class="h-full relative min-w-0 flex flex-col border-r border-[var(--app-border)] overflow-hidden {previewVisible
-            ? 'min-h-0'
-            : 'flex-1 min-h-0'}"
-        >
-          <EditorQuickActions
-            editor={editor}
-            typstFontFaces={typstFontFaces}
-            showTypstToolbar={!isCurrentBinary && !!(currentFilePath && isTypstPath(currentFilePath))}
-          />
-          <div class="relative flex-1 min-h-0 min-w-0 flex flex-col">
-            <MonacoEditorPane
-              initialValue={content}
-              languageId={editorLanguageId}
-              readOnly={isCurrentBinary}
-              monacoTheme={monacoThemeResolved}
-              onContentChange={onEditorContentChange}
-              onReady={(ed) => {
-                editor = ed;
-                monacoMenuRef.current = ed;
-              }}
-              onDispose={() => {
-                editor = undefined;
-                monacoMenuRef.current = undefined;
-              }}
-            />
-          </div>
-        </div>
-
-        {#if previewVisible}
-          <!-- svelte-ignore a11y_no_static_element_interactions -->
-          <div
-            onpointerdown={handleEditorSplitPointerDown}
-            class="resize-grip-host touch-none shrink-0 z-10 relative group flex w-2 items-stretch justify-center cursor-col-resize"
-            role="separator"
-            aria-orientation="vertical"
-            aria-label="Resize editor and preview"
-          >
-            <div
-              class="w-px self-stretch min-h-[120px] max-h-[80vh] my-auto rounded-full transition-colors bg-[var(--app-grip)] hover:bg-[var(--app-grip-hover)] {isResizing
-                ? 'bg-[var(--app-grip-active)]'
-                : ''}"
-            ></div>
-            <div
-              class="resize-grip-hint pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 h-10 w-6 flex items-center justify-center rounded-md bg-[var(--app-bg)] border border-[var(--app-border)]"
-            >
-              <GripVertical size={16} class="text-[var(--app-icon-muted)]" />
-            </div>
-          </div>
-
-          <div class="h-full flex flex-col min-w-0 min-h-0 overflow-hidden">
-            <FilePreviewPane
-              mode={filePreviewMode}
-              appAppearance={resolvedAppearance}
-              onPdfDirty={markCurrentPdfDirty}
-              onPdfDiskApiReady={handlePdfDiskApiReady}
-              bind:currentPage
-              bind:scale
-              bind:translateX
-              bind:translateY
-            />
-          </div>
-        {/if}
-      {/if}
-    </div>
+    <EditorPreviewSplit
+      bind:editorPreviewRegion
+      isPreviewOnlyMedia={isPreviewOnlyMedia}
+      {previewVisible}
+      editorPaneMin={EDITOR_PANE_MIN}
+      previewPaneMin={PREVIEW_PANE_MIN}
+      splitGripPx={SPLIT_GRIP_PX}
+      {splitRatio}
+      isResizingSplit={isResizing}
+      onSplitGripPointerDown={handleEditorSplitPointerDown}
+      filePreviewMode={filePreviewMode}
+      resolvedAppearance={resolvedAppearance}
+      onPdfDirty={markCurrentPdfDirty}
+      onPdfDiskApiReady={handlePdfDiskApiReady}
+      bind:currentPage
+      bind:scale
+      bind:translateX
+      bind:translateY
+      editor={editor}
+      typstFontFaces={typstFontFaces}
+      showTypstToolbar={!isCurrentBinary && !!(currentFilePath && isTypstPath(currentFilePath))}
+      {content}
+      editorLanguageId={editorLanguageId}
+      readOnly={isCurrentBinary}
+      monacoThemeResolved={monacoThemeResolved}
+      onContentChange={onEditorContentChange}
+      onMonacoReady={(ed) => {
+        editor = ed;
+        monacoMenuRef.current = ed;
+      }}
+      onMonacoDispose={() => {
+        editor = undefined;
+        monacoMenuRef.current = undefined;
+      }}
+    />
     {/if}
   </div>
   </div>
@@ -2503,40 +2287,5 @@
     padding: 0;
     overflow: hidden;
     overscroll-behavior: none;
-  }
-
-  /*
-   * Resize grip badge (GripVertical): was opacity-0 until :hover, which iPadOS never gets.
-   * Show always on touch / coarse pointer; keep hover-to-reveal on fine-pointer desktops.
-   */
-  .resize-grip-hint {
-    opacity: 1;
-    transition: opacity 0.15s ease;
-  }
-
-  @media (hover: hover) and (pointer: fine) {
-    .resize-grip-hint {
-      opacity: 0;
-    }
-    .resize-grip-host:hover .resize-grip-hint {
-      opacity: 1;
-    }
-  }
-
-  /* iPadOS / touch: always show (overrides fine+hover if UA mis-reports capabilities) */
-  @media (pointer: coarse), (hover: none) {
-    .resize-grip-hint {
-      opacity: 1;
-    }
-    .resize-grip-host:hover .resize-grip-hint {
-      opacity: 1;
-    }
-  }
-
-  /* Narrow desktop: hide badge (same as old max-sm:hidden); touch still sees it above */
-  @media (max-width: 639px) and (hover: hover) and (pointer: fine) {
-    .resize-grip-hint {
-      display: none !important;
-    }
   }
 </style>
