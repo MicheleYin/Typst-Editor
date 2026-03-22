@@ -39,9 +39,31 @@
 
   let typstRegistered = false;
 
+  /** WebKit/iPad: wheel events must hit Monaco’s view + hidden textarea path for smooth inertial scroll; focus if the user scrolls before clicking. */
+  function installScrollFocusBridge(ed: monaco.editor.IStandaloneCodeEditor) {
+    const dom = ed.getDomNode();
+    if (!dom) return () => {};
+
+    const ensureFocused = () => {
+      if (!ed.hasTextFocus()) {
+        ed.focus();
+      }
+    };
+
+    dom.addEventListener("pointerdown", ensureFocused, { capture: true });
+    dom.addEventListener("wheel", ensureFocused, { capture: true, passive: true });
+
+    return () => {
+      dom.removeEventListener("pointerdown", ensureFocused, { capture: true });
+      dom.removeEventListener("wheel", ensureFocused, { capture: true });
+    };
+  }
+
   onMount(() => {
     let ed: monaco.editor.IStandaloneCodeEditor | undefined;
     let cancelled = false;
+    let removeScrollFocusBridge: (() => void) | undefined;
+    let layoutRo: ResizeObserver | undefined;
 
     tick().then(() => {
       if (cancelled || !host) {
@@ -69,7 +91,24 @@
         minimap: { enabled: false },
         fontSize: 14,
         wordWrap: "on",
-        automaticLayout: true,
+        /**
+         * automaticLayout uses ResizeObserver + internal sizing; on iPad/WKWebView with transformed
+         * ancestors it can disagree with the real box. We measure the host and call layout() explicitly.
+         */
+        automaticLayout: false,
+        /** Extra blank scroll past the last line reads like “Monaco is taller than its slot” on touch. */
+        scrollBeyondLastLine: false,
+        scrollBeyondLastColumn: 0,
+        /** Touch / trackpad momentum inside the editor instead of fighting the webview. */
+        inertialScroll: true,
+        /** Fewer compositor layers — helps some WebKit bugs with scaled/transformed shells. */
+        disableLayerHinting: true,
+        overviewRulerLanes: 0,
+        scrollbar: {
+          vertical: "auto",
+          horizontal: "auto",
+          useShadows: false,
+        },
       });
 
       if (cancelled) {
@@ -89,12 +128,32 @@
         console.error("Failed to initialize shortcuts metadata:", e);
       }
 
+      removeScrollFocusBridge = installScrollFocusBridge(ed);
+
+      function layoutEditorToHost() {
+        const instance = ed;
+        if (!instance || !host) return;
+        const w = Math.floor(host.clientWidth);
+        const h = Math.floor(host.clientHeight);
+        if (w < 2 || h < 2) return;
+        instance.layout({ width: w, height: h });
+      }
+
+      layoutRo = new ResizeObserver(() => {
+        requestAnimationFrame(() => layoutEditorToHost());
+      });
+      layoutRo.observe(host);
+      requestAnimationFrame(() => layoutEditorToHost());
+
       editorInstance = ed;
       onReady(ed);
     });
 
     return () => {
       cancelled = true;
+      layoutRo?.disconnect();
+      layoutRo = undefined;
+      removeScrollFocusBridge?.();
       disposeMonacoShortcutOverridesOnly();
       ed?.dispose();
       editorInstance = undefined;
@@ -124,4 +183,7 @@
   });
 </script>
 
-<div bind:this={host} class="h-full w-full min-h-0 flex-1"></div>
+<div
+  bind:this={host}
+  class="h-full min-h-0 w-full min-w-0 flex-1 overflow-hidden"
+></div>

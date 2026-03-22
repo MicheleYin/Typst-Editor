@@ -1695,13 +1695,13 @@
 
 
 <div
-  class="h-full max-h-full w-full bg-[var(--app-bg)] overflow-clip {isResizing || isResizingSidebar
+  class="flex flex-1 flex-col min-h-0 w-full max-h-full overflow-hidden {isResizing || isResizingSidebar
     ? 'cursor-col-resize select-none'
     : ''}"
 >
   <!-- Transform scale (not CSS zoom) so the whole shell scales in Firefox / all WebViews; Monaco stays 14px. -->
   <div
-    class="h-full max-h-full flex flex-col text-[var(--app-fg)] overflow-clip {isResizing || isResizingSidebar
+    class="flex flex-1 flex-col min-h-0 w-full max-h-full overflow-hidden text-[var(--app-fg)] {isResizing || isResizingSidebar
       ? 'cursor-col-resize select-none'
       : ''}"
     style:--app-zoom={appZoom}

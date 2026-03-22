@@ -17,7 +17,7 @@
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
   onpointerdown={onPointerDown}
-  class="resize-grip-host touch-none shrink-0 z-10 relative group flex w-2 items-stretch justify-center cursor-col-resize"
+  class="resize-grip-host touch-none shrink-0 z-10 relative group flex h-full min-h-0 w-2 items-stretch justify-center cursor-col-resize"
   title={gripTitle}
   role="separator"
   aria-orientation="vertical"

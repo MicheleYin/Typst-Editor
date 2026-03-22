@@ -115,7 +115,7 @@
 </script>
 
 <header
-  class="h-auto pb-2 bg-[var(--app-bg)] border-b border-[var(--app-border)] flex items-center px-4 gap-2 z-[80] select-none {showInAppMenu
+  class="shrink-0 h-auto pb-2 bg-[var(--app-bg)] border-b border-[var(--app-border)] flex items-center px-4 gap-2 z-[80] select-none {showInAppMenu
     ? ''
     : 'pt-2'}"
   style:padding-top={showInAppMenu
