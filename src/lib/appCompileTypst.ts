@@ -21,10 +21,12 @@ export type CompileTypstInvokeResult = {
 export async function invokeCompileTypst(
   text: string,
   mainPath: string | null,
+  projectFolderPath: string | null,
 ): Promise<CompileTypstInvokeResult> {
   return await invoke<CompileTypstInvokeResult>("compile_typst", {
     content: text,
     mainPath,
+    projectFolderPath,
   });
 }
 

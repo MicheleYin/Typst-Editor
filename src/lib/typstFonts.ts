@@ -7,6 +7,8 @@ export type TypstFontFace = {
   bundledTypst: boolean;
   /** From app bundle `resources/fonts/bundled` */
   bundledApp: boolean;
+  /** `.ttf` / `.otf` / etc. under the opened project folder (or next to the main `.typ` if no folder). */
+  fromProject?: boolean;
 };
 
 export type TypstFontConfig = {
@@ -19,9 +21,15 @@ export type TypstFontStorageInfo = {
   appBundledFontsDir: string | null;
 };
 
-export async function listTypstFontFaces(): Promise<TypstFontFace[]> {
+export async function listTypstFontFaces(
+  projectFolderPath: string | null,
+  mainPath: string | null,
+): Promise<TypstFontFace[]> {
   const { invoke } = await import("@tauri-apps/api/core");
-  return invoke<TypstFontFace[]>("list_typst_font_faces");
+  return invoke<TypstFontFace[]>("list_typst_font_faces", {
+    projectFolderPath,
+    mainPath,
+  });
 }
 
 export async function getTypstFontConfig(): Promise<TypstFontConfig> {

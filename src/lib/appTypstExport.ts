@@ -11,9 +11,18 @@ export async function runTypstExportFromModal(args: {
   projectsUseDocumentDir: boolean;
   content: string;
   currentFilePath: string | null;
+  /** Opened project / workspace folder; used to load project-local font files. */
+  projectFolderPath: string | null;
   setExportBusy: (busy: boolean) => void;
 }): Promise<void> {
-  const { payload, projectsUseDocumentDir, content, currentFilePath, setExportBusy } = args;
+  const {
+    payload,
+    projectsUseDocumentDir,
+    content,
+    currentFilePath,
+    projectFolderPath,
+    setExportBusy,
+  } = args;
   const base = currentFilePath ? currentFilePath.replace(/\.typ$/i, "") : "document";
   const ext =
     payload.kind === "pdf"
@@ -50,6 +59,7 @@ export async function runTypstExportFromModal(args: {
       }>("export_typst_stage", {
         content,
         mainPath: currentFilePath ?? null,
+        projectFolderPath,
         outputPath: defaultPath,
         exportKind: payload,
       });
@@ -90,7 +100,7 @@ export async function runTypstExportFromModal(args: {
       if (w.length > 0) {
         const detail = w.map((d) => d.message).join("\n");
         await message(
-          `Export finished.${zipNote}\n\nCompiler warnings (${w.length}):\n${detail}\n\nTip: this app does not load system fonts for Typst — import fonts in Settings → Typst fonts (or ship them in resources/fonts/bundled).`,
+          `Export finished.${zipNote}\n\nCompiler warnings (${w.length}):\n${detail}\n\nTip: this app does not load system fonts for Typst — add font files in your project folder, import them in Settings → Typst fonts, or ship them in resources/fonts/bundled.`,
           { title, kind: "info" },
         );
       } else {
@@ -125,6 +135,7 @@ export async function runTypstExportFromModal(args: {
     }>("export_typst", {
       content,
       mainPath: currentFilePath ?? null,
+      projectFolderPath,
       outputPath: path,
       exportKind: payload,
     });
@@ -144,10 +155,10 @@ export async function runTypstExportFromModal(args: {
             : "Export HTML";
     if (w.length > 0) {
       const detail = w.map((d) => d.message).join("\n");
-      await message(
-        `Export finished.${filesNote}\n\nCompiler warnings (${w.length}):\n${detail}\n\nTip: this app does not load system fonts for Typst — import fonts in Settings → Typst fonts (or ship them in resources/fonts/bundled).`,
-        { title, kind: "info" },
-      );
+        await message(
+          `Export finished.${filesNote}\n\nCompiler warnings (${w.length}):\n${detail}\n\nTip: this app does not load system fonts for Typst — add font files in your project folder, import them in Settings → Typst fonts, or ship them in resources/fonts/bundled.`,
+          { title, kind: "info" },
+        );
     } else {
       await message(`Export finished.${filesNote}`, { title, kind: "info" });
     }

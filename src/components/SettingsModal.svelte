@@ -434,9 +434,15 @@
             <p class="text-[var(--app-fg-secondary)] text-xs leading-relaxed">
               Typst loads <strong class="text-[var(--app-fg)]">typst-assets</strong> fonts (e.g. New Computer
               Modern), fonts from <code class="text-[var(--app-link)]">src-tauri/resources/fonts/bundled</code>
-              (shipped with the app), and fonts you <strong class="text-[var(--app-fg)]">import</strong> here.
-              Imports are <strong class="text-[var(--app-fg)]">copied</strong> into app local data so preview and
-              PDF work under the App Store sandbox. Use
+              (shipped with the app), <strong class="text-[var(--app-fg)]">font files under your open project
+              folder</strong> (<code class="text-[var(--app-link)]">.ttf</code> /
+              <code class="text-[var(--app-link)]">.otf</code> /
+              <code class="text-[var(--app-link)]">.ttc</code> /
+              <code class="text-[var(--app-link)]">.otc</code>, skipping heavy dirs like
+              <code class="text-[var(--app-link)]">node_modules</code>), and fonts you
+              <strong class="text-[var(--app-fg)]">import</strong> here. Imports are
+              <strong class="text-[var(--app-fg)]">copied</strong> into app local data so preview and PDF work
+              under the App Store sandbox. Use
               <code class="text-[var(--app-link)]">#set text(font: &quot;Family Name&quot;)</code> in your
               document.
             </p>

@@ -148,6 +148,87 @@ fn walk_font_files(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
+/// Skip heavy / non-font subtrees when scanning an opened project folder.
+const PROJECT_FONT_WALK_SKIP_DIR_NAMES: &[&str] = &[
+    ".git",
+    "node_modules",
+    "target",
+    "dist",
+    "build",
+    ".vite",
+    ".svelte-kit",
+    "__pycache__",
+    ".pytest_cache",
+    ".mypy_cache",
+    "coverage",
+];
+
+fn walk_project_font_files(dir: &Path, out: &mut Vec<PathBuf>) {
+    let Ok(rd) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in rd.flatten() {
+        let p = entry.path();
+        if p.is_dir() {
+            if let Some(name) = p.file_name().and_then(|s| s.to_str()) {
+                if PROJECT_FONT_WALK_SKIP_DIR_NAMES
+                    .iter()
+                    .any(|n| name.eq_ignore_ascii_case(n))
+                {
+                    continue;
+                }
+            }
+            walk_project_font_files(&p, out);
+        } else if is_font_extension(&p) {
+            out.push(p);
+        }
+    }
+}
+
+/// Prefer the opened project folder; otherwise the parent directory of the main `.typ` file.
+fn resolve_typst_font_search_root(
+    project_folder_path: Option<&str>,
+    main_path: Option<&str>,
+) -> Option<PathBuf> {
+    if let Some(s) = project_folder_path.map(str::trim).filter(|s| !s.is_empty()) {
+        let p = PathBuf::from(s);
+        if p.is_dir() {
+            return fs::canonicalize(&p).ok().or(Some(p));
+        }
+    }
+    let main = main_path.map(str::trim).filter(|s| !s.is_empty())?;
+    let file = PathBuf::from(main);
+    let parent = file.parent()?.to_path_buf();
+    if parent.as_os_str().is_empty() {
+        return None;
+    }
+    if parent.is_dir() {
+        return fs::canonicalize(&parent).ok().or(Some(parent));
+    }
+    None
+}
+
+fn collect_project_font_paths(search_root: &Path) -> Vec<PathBuf> {
+    let Ok(root_canon) = fs::canonicalize(search_root) else {
+        return Vec::new();
+    };
+    if !root_canon.is_dir() {
+        return Vec::new();
+    }
+    let mut raw = Vec::new();
+    walk_project_font_files(&root_canon, &mut raw);
+    raw.sort();
+    raw.dedup();
+    raw
+        .into_iter()
+        .filter(|p| {
+            fs::canonicalize(p)
+                .map(|c| c.starts_with(&root_canon))
+                .unwrap_or(false)
+        })
+        .collect()
+}
+
 /// Fonts from `typst-assets` (New Computer Modern, etc.).
 fn bundled_typst_font_faces() -> Vec<Font> {
     typst_assets::fonts()
@@ -310,20 +391,43 @@ fn collect_imported_font_paths(config: &TypstFontConfig) -> Vec<PathBuf> {
     paths
 }
 
-/// typst-assets → app `resources/fonts/bundled` → user imports (local data).
-fn all_world_fonts(app: &tauri::AppHandle) -> Vec<Font> {
+/// typst-assets → app `resources/fonts/bundled` → project tree → user imports (local data).
+fn all_world_fonts(
+    app: &tauri::AppHandle,
+    project_folder_path: Option<String>,
+    main_path: Option<String>,
+) -> Vec<Font> {
     let mut fonts: Vec<Font> = bundled_typst_font_faces();
     let n_typst = fonts.len();
     let app_paths = collect_app_bundle_font_paths(app);
     let app_pairs = fonts_from_paths(&app_paths);
     let n_app = app_pairs.len();
     fonts.extend(app_pairs.into_iter().map(|(_, f)| f));
+
+    let n_proj_files;
+    let n_proj_faces;
+    if let Some(root) = resolve_typst_font_search_root(
+        project_folder_path.as_deref(),
+        main_path.as_deref(),
+    ) {
+        let project_paths = collect_project_font_paths(&root);
+        n_proj_files = project_paths.len();
+        let project_pairs = fonts_from_paths(&project_paths);
+        n_proj_faces = project_pairs.len();
+        fonts.extend(project_pairs.into_iter().map(|(_, f)| f));
+    } else {
+        n_proj_files = 0;
+        n_proj_faces = 0;
+    }
+
     let config = load_typst_font_config(app);
     let user_paths = collect_imported_font_paths(&config);
     let user = fonts_from_paths(&user_paths);
     let n_user = user.len();
     fonts.extend(user.into_iter().map(|(_, f)| f));
-    eprintln!("typst-editor: {n_typst} typst-assets + {n_app} app-bundled + {n_user} imported faces");
+    eprintln!(
+        "typst-editor: {n_typst} typst-assets + {n_app} app-bundled + {n_proj_faces} project ({n_proj_files} files) + {n_user} imported faces"
+    );
     fonts
 }
 
@@ -619,9 +723,14 @@ fn diagnostic_to_json(world: &EditorWorld, d: &SourceDiagnostic) -> CompileDiagn
 /// `main_path`: absolute path to the saved `.typ` file when known; enables local imports
 /// and image paths. Online `@preview/...` packages work with or without `main_path`.
 #[command]
-fn compile_typst(app: tauri::AppHandle, content: String, main_path: Option<String>) -> CompileResponse {
+fn compile_typst(
+    app: tauri::AppHandle,
+    content: String,
+    main_path: Option<String>,
+    project_folder_path: Option<String>,
+) -> CompileResponse {
     let package_cache = ensure_typst_package_cache(&app);
-    let fonts = all_world_fonts(&app);
+    let fonts = all_world_fonts(&app, project_folder_path, main_path.clone());
     let world = EditorWorld::new(content, main_path, package_cache, fonts);
     let warned = typst::compile::<PagedDocument>(&world);
     let warnings: Vec<_> = warned
@@ -752,11 +861,12 @@ fn export_typst_outputs(
     app: &tauri::AppHandle,
     content: String,
     main_path: Option<String>,
+    project_folder_path: Option<String>,
     output_path: &str,
     export_kind: ExportTypstKind,
 ) -> Result<(Vec<CompileDiagnosticJson>, Vec<(PathBuf, Vec<u8>)>), String> {
     let package_cache = ensure_typst_package_cache(app);
-    let fonts = all_world_fonts(app);
+    let fonts = all_world_fonts(app, project_folder_path, main_path.clone());
     let world = EditorWorld::new(content, main_path, package_cache, fonts);
 
     match export_kind {
@@ -999,6 +1109,7 @@ fn export_typst(
     app: tauri::AppHandle,
     content: String,
     main_path: Option<String>,
+    project_folder_path: Option<String>,
     output_path: String,
     export_kind: ExportTypstKind,
 ) -> Result<ExportTypstResponse, String> {
@@ -1006,6 +1117,7 @@ fn export_typst(
         &app,
         content,
         main_path,
+        project_folder_path,
         output_path.trim(),
         export_kind,
     )?;
@@ -1028,6 +1140,7 @@ fn export_typst_stage(
     app: tauri::AppHandle,
     content: String,
     main_path: Option<String>,
+    project_folder_path: Option<String>,
     output_path: String,
     export_kind: ExportTypstKind,
 ) -> Result<ExportTypstStageResponse, String> {
@@ -1035,6 +1148,7 @@ fn export_typst_stage(
         &app,
         content,
         main_path,
+        project_folder_path,
         output_path.trim(),
         export_kind,
     )?;
@@ -1111,6 +1225,9 @@ struct TypstFontFaceJson {
     bundled_typst: bool,
     /// From `bundle.resources` → `fonts/bundled`.
     bundled_app: bool,
+    /// From the opened project folder (or main file directory when no folder is open).
+    #[serde(default)]
+    from_project: bool,
 }
 
 #[derive(serde::Serialize)]
@@ -1131,12 +1248,25 @@ fn get_typst_font_storage_info(app: tauri::AppHandle) -> Result<TypstFontStorage
 }
 
 #[command]
-fn list_typst_font_faces(app: tauri::AppHandle) -> Result<Vec<TypstFontFaceJson>, String> {
+fn list_typst_font_faces(
+    app: tauri::AppHandle,
+    project_folder_path: Option<String>,
+    main_path: Option<String>,
+) -> Result<Vec<TypstFontFaceJson>, String> {
     let config = load_typst_font_config(&app);
     let user_paths = collect_imported_font_paths(&config);
     let user_pairs = fonts_from_paths(&user_paths);
     let app_paths = collect_app_bundle_font_paths(&app);
     let app_pairs = fonts_from_paths(&app_paths);
+    let project_pairs = resolve_typst_font_search_root(
+        project_folder_path.as_deref(),
+        main_path.as_deref(),
+    )
+    .map(|root| {
+        let paths = collect_project_font_paths(&root);
+        fonts_from_paths(&paths)
+    })
+    .unwrap_or_default();
     let mut out: Vec<TypstFontFaceJson> = Vec::new();
     for f in bundled_typst_font_faces() {
         let info = f.info();
@@ -1146,6 +1276,7 @@ fn list_typst_font_faces(app: tauri::AppHandle) -> Result<Vec<TypstFontFaceJson>
             source_path: None,
             bundled_typst: true,
             bundled_app: false,
+            from_project: false,
         });
     }
     for (path, f) in app_pairs {
@@ -1156,6 +1287,18 @@ fn list_typst_font_faces(app: tauri::AppHandle) -> Result<Vec<TypstFontFaceJson>
             source_path: Some(path.to_string_lossy().into_owned()),
             bundled_typst: false,
             bundled_app: true,
+            from_project: false,
+        });
+    }
+    for (path, f) in project_pairs {
+        let info = f.info();
+        out.push(TypstFontFaceJson {
+            family: info.family.as_str().to_string(),
+            variant: format!("{:?}", info.variant),
+            source_path: Some(path.to_string_lossy().into_owned()),
+            bundled_typst: false,
+            bundled_app: false,
+            from_project: true,
         });
     }
     for (path, f) in user_pairs {
@@ -1166,6 +1309,7 @@ fn list_typst_font_faces(app: tauri::AppHandle) -> Result<Vec<TypstFontFaceJson>
             source_path: Some(path.to_string_lossy().into_owned()),
             bundled_typst: false,
             bundled_app: false,
+            from_project: false,
         });
     }
     Ok(out)

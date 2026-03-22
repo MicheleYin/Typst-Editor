@@ -521,11 +521,20 @@
 
   async function refreshTypstFontFaces() {
     try {
-      typstFontFaces = await listTypstFontFaces();
+      typstFontFaces = await listTypstFontFaces(
+        currentFolder,
+        currentFilePath && isTypstPath(currentFilePath) ? currentFilePath : null,
+      );
     } catch {
       typstFontFaces = [];
     }
   }
+
+  $effect(() => {
+    void currentFolder;
+    void currentFilePath;
+    void refreshTypstFontFaces();
+  });
 
   function openSettings(tab: "shortcuts" | "packageCache" | "fonts" | "faq" = "shortcuts") {
     settingsInitialTab = tab;
@@ -1330,7 +1339,7 @@
 
   async function compile(text: string, pathSnapshot: string | null) {
     try {
-      const result = await invokeCompileTypst(text, pathSnapshot);
+      const result = await invokeCompileTypst(text, pathSnapshot, currentFolder);
       if (currentFilePath !== pathSnapshot || content !== text) return;
       compileWarnings = result.warnings ?? [];
       if (result.success) {
@@ -1367,6 +1376,7 @@
       projectsUseDocumentDir,
       content,
       currentFilePath,
+      projectFolderPath: currentFolder,
       setExportBusy: (v) => {
         exportBusy = v;
       },
@@ -1375,6 +1385,7 @@
 
   $effect(() => {
     const pathSnapshot = currentFilePath;
+    void currentFolder;
     if (!pathSnapshot || !isTypstPath(pathSnapshot)) return;
     const text = content;
     const timeoutId = setTimeout(() => {
@@ -1561,7 +1572,6 @@
   let showInAppMenu = $state(false);
 
   onMount(() => {
-    void refreshTypstFontFaces();
     const mq = window.matchMedia("(prefers-color-scheme: dark)");
     systemPrefersDark = mq.matches;
     const onScheme = () => {
@@ -1685,7 +1695,7 @@
 
 
 <div
-  class="h-dvh max-h-dvh w-full bg-[var(--app-bg)] overflow-clip {isResizing || isResizingSidebar
+  class="h-full max-h-full w-full bg-[var(--app-bg)] overflow-clip {isResizing || isResizingSidebar
     ? 'cursor-col-resize select-none'
     : ''}"
 >

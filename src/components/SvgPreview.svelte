@@ -522,8 +522,9 @@
           </div>
           <p class="text-[11px] text-amber-950/90 mt-0.5 leading-snug">
             Preview still builds, but results may be wrong (e.g. missing fonts). This app
-            does <strong>not</strong> use system fonts for Typst — add font files in
-            <strong class="font-semibold">Settings → Typst fonts</strong> or ship them in
+            does <strong>not</strong> use system fonts for Typst — put font files in your
+            <strong class="font-semibold">project folder</strong>, add them in
+            <strong class="font-semibold">Settings → Typst fonts</strong>, or ship them in
             <code class="font-mono text-[10px] bg-amber-200/60 px-1 rounded"
               >resources/fonts/bundled</code
             >.

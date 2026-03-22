@@ -25,12 +25,14 @@
   const liveRows = $derived.by((): LiveRow[] => {
     const typst = faces.filter((f: TypstFontFace) => f.bundledTypst);
     const app = faces.filter((f: TypstFontFace) => f.bundledApp);
+    const project = faces.filter((f: TypstFontFace) => f.fromProject);
     const imported = faces.filter(
-      (f: TypstFontFace) => !f.bundledTypst && !f.bundledApp,
+      (f: TypstFontFace) => !f.bundledTypst && !f.bundledApp && !f.fromProject,
     );
     const rows: LiveRow[] = [
       ...typst.map((f: TypstFontFace) => ({ ...f, group: "Bundled with Typst" })),
       ...app.map((f: TypstFontFace) => ({ ...f, group: "Bundled with app" })),
+      ...project.map((f: TypstFontFace) => ({ ...f, group: "Project folder" })),
       ...imported.map((f: TypstFontFace) => ({ ...f, group: "Imported (app storage)" })),
     ];
     return rows;
@@ -187,8 +189,9 @@
         />
         {#if useLiveCatalog}
           <p class="mt-1.5 text-[10px] text-[var(--app-fg-muted)] leading-snug">
-            Bundled, app-shipped, and imported fonts are loaded by Typst. Import fonts in Settings → Fonts
-            (copied into app storage for sandboxing).
+            Typst also picks up <code class="text-[var(--app-link)]">.ttf</code> /
+            <code class="text-[var(--app-link)]">.otf</code> files under your open project folder. Settings →
+            Fonts copies imports into app storage for sandboxing.
           </p>
         {:else}
           <p class="mt-1.5 text-[10px] text-[var(--app-fg-muted)] leading-snug">
