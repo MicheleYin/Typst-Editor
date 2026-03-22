@@ -1,12 +1,7 @@
 <script lang="ts">
   import { Check } from "lucide-svelte";
   import CustomSelect from "./CustomSelect.svelte";
-
-  export type ExportTypstKindPayload =
-    | { kind: "pdf"; pdfProfile: string; tagged: boolean }
-    | { kind: "svg" }
-    | { kind: "png"; ppi: number }
-    | { kind: "html" };
+  import type { ExportTypstKindPayload } from "../lib/exportTypstKindPayload";
 
   let {
     open = false,

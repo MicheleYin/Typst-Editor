@@ -12,11 +12,10 @@
     readDir,
     BaseDirectory,
   } from "@tauri-apps/plugin-fs";
-  import { dirname, join } from "@tauri-apps/api/path";
+  import { join } from "@tauri-apps/api/path";
   import Header from "./components/Header.svelte";
-  import ExportTypstModal, {
-    type ExportTypstKindPayload,
-  } from "./components/ExportTypstModal.svelte";
+  import ExportTypstModal from "./components/ExportTypstModal.svelte";
+  import type { ExportTypstKindPayload } from "./lib/exportTypstKindPayload";
   import Sidebar from "./components/Sidebar.svelte";
   import SettingsModal from "./components/SettingsModal.svelte";
   import IosProjectHub from "./components/IosProjectHub.svelte";
@@ -83,8 +82,6 @@
   } from "./lib/projectFileOps";
   import {
     desktopReadTextFile,
-    desktopWriteTextFile,
-    desktopWriteBinaryFile,
     desktopReadDir,
     desktopRecentRemove,
     desktopRecentProjectsList,
@@ -96,14 +93,38 @@
     desktopRecentTouch,
     desktopImportTypIntoProject,
   } from "./lib/desktopProjectFs";
+  import { exportStagingRelPath } from "./lib/appExportStaging";
+  import { ensureDefaultTypstExtension, nextNonCollidingFileName } from "./lib/appTypstFileNames";
+  import { normalizeFsPath, isExplorerPathInsideProject } from "./lib/appExplorerPaths";
+  import { humanizeImportZipBasename } from "./lib/appImportZip";
+  import {
+    writeTextFileAtProjectPath,
+    writeBinaryFileAtProjectPath,
+  } from "./lib/appProjectWrite";
+  import {
+    invokeCompileTypst,
+    compileDiagnosticFromUnknownError,
+    type CompileDiagnostic,
+  } from "./lib/appCompileTypst";
+  import {
+    SPLIT_RATIO_KEY,
+    EDITOR_PANE_MIN,
+    PREVIEW_PANE_MIN,
+    SPLIT_GRIP_PX,
+    APP_MIN_WIDTH_PX,
+    APP_MIN_HEIGHT_PX,
+    SIDEBAR_W_KEY,
+    readStoredSplitRatio,
+    readStoredSidebarWidth,
+  } from "./lib/appLayoutStorage";
+  import { editorSplitRatioFromPointer, sidebarWidthFromPointer } from "./lib/appPaneResizeGeometry";
+  import {
+    dispatchAppMenuId,
+    runShortcutAction,
+    type AppCommandContext,
+  } from "./lib/appCommands";
+  import { runTypstExportFromModal } from "./lib/appTypstExport";
   import pkg from "../package.json";
-
-  /** App Documents-relative root for [`export_typst_stage`] output (iOS). */
-  const EXPORT_STAGING_ROOT = "typst-editor-export-staging";
-
-  function exportStagingRelPath(stagingId: string, fileName: string): string {
-    return `${EXPORT_STAGING_ROOT}/${stagingId}/${fileName}`;
-  }
 
   let appName = $state(pkg.name);
 
@@ -166,74 +187,12 @@
     }
   }
 
-  /** Append `.typ` only when the leaf name has no extension (any explicit extension is kept). */
-  function ensureDefaultTypstExtension(fileName: string): string {
-    const leaf = fileName.split(/[/\\]/).pop() ?? fileName;
-    const dot = leaf.lastIndexOf(".");
-    if (dot > 0 && dot < leaf.length - 1) return fileName;
-    return fileName.toLowerCase().endsWith(".typ") ? fileName : `${fileName}.typ`;
-  }
-
-  /** If `fileName` is already taken, return `stem-2.ext`, `stem-3.ext`, … preserving extension. */
-  function nextNonCollidingFileName(fileName: string, nameSet: Set<string>): string {
-    if (!nameSet.has(fileName)) return fileName;
-    const leaf = fileName.split(/[/\\]/).pop() ?? fileName;
-    const lastDot = leaf.lastIndexOf(".");
-    const hasExt = lastDot > 0 && lastDot < leaf.length - 1;
-    const stem = hasExt ? leaf.slice(0, lastDot) : leaf;
-    const ext = hasExt ? leaf.slice(lastDot) : ".typ";
-    let n = 2;
-    while (nameSet.has(`${stem}-${n}${ext}`)) n += 1;
-    return `${stem}-${n}${ext}`;
-  }
-
-  /** Write: iOS sandbox via plugin-fs; desktop project folders via Rust. */
   async function writeFileAtPath(absPath: string, data: string): Promise<void> {
-    if (!projectsUseDocumentDir) {
-      await desktopWriteTextFile(absPath, data);
-      return;
-    }
-    const root = await invoke<string | null>("workspace_documents_dir");
-    if (root) {
-      const normRoot = root.replace(/\/$/, "");
-      const normPath = absPath.replace(/\/$/, "");
-      if (normPath === normRoot || normPath.startsWith(`${normRoot}/`)) {
-        const rel =
-          normPath === normRoot ? "" : normPath.slice(normRoot.length + 1);
-        if (rel && !rel.startsWith("..") && !rel.includes("/../")) {
-          const useDoc = await invoke<boolean>("workspace_projects_use_document_dir");
-          await writeTextFile(rel, data, {
-            baseDir: useDoc ? BaseDirectory.Document : BaseDirectory.AppLocalData,
-          });
-          return;
-        }
-      }
-    }
-    await writeTextFile(absPath, data);
+    return writeTextFileAtProjectPath(absPath, data, projectsUseDocumentDir);
   }
 
   async function writeBinaryFileAtPath(absPath: string, data: Uint8Array): Promise<void> {
-    if (!projectsUseDocumentDir) {
-      await desktopWriteBinaryFile(absPath, data);
-      return;
-    }
-    const root = await invoke<string | null>("workspace_documents_dir");
-    if (root) {
-      const normRoot = root.replace(/\/$/, "");
-      const normPath = absPath.replace(/\/$/, "");
-      if (normPath === normRoot || normPath.startsWith(`${normRoot}/`)) {
-        const rel =
-          normPath === normRoot ? "" : normPath.slice(normRoot.length + 1);
-        if (rel && !rel.startsWith("..") && !rel.includes("/../")) {
-          const useDoc = await invoke<boolean>("workspace_projects_use_document_dir");
-          await writeFile(rel, data, {
-            baseDir: useDoc ? BaseDirectory.Document : BaseDirectory.AppLocalData,
-          });
-          return;
-        }
-      }
-    }
-    await writeFile(absPath, data);
+    return writeBinaryFileAtProjectPath(absPath, data, projectsUseDocumentDir);
   }
 
   function markCurrentPdfDirty() {
@@ -483,15 +442,6 @@
   /** Last successful compile for the current file (stale preview on error). */
   let lastValidPages = $state<string[]>([]);
   let lastValidPageCount = $state(0);
-  type CompileDiagnostic = {
-    severity?: "error" | "warning";
-    file: string | null;
-    line: number | null;
-    column: number | null;
-    message: string;
-    hints: string[];
-    trace: { message: string; line: number | null; column: number | null; file: string | null }[];
-  };
   let compileDiagnostics = $state<CompileDiagnostic[]>([]);
   let compileWarnings = $state<CompileDiagnostic[]>([]);
   let exportBusy = $state(false);
@@ -520,25 +470,6 @@
     compileDiagnostics = [];
     compileWarnings = [];
   });
-  const SPLIT_RATIO_KEY = "typst-editor-editor-preview-ratio";
-  /** Minimum pane widths; above that, editor and preview share extra space by flex ratio (default 50/50). */
-  const EDITOR_PANE_MIN = 100;
-  const PREVIEW_PANE_MIN = 100;
-  const SPLIT_GRIP_PX = 4;
-  /** Matches layout: sidebar + editor/preview region needs at least this (web fallback; Tauri uses minWidth) */
-  /** Sidebar + editor + grip + preview + mins need ~500px */
-  const APP_MIN_WIDTH_PX = 400;
-  const APP_MIN_HEIGHT_PX = 300;
-
-  function readStoredSplitRatio(): number {
-    try {
-      const v = parseFloat(localStorage.getItem(SPLIT_RATIO_KEY) ?? "");
-      if (Number.isFinite(v) && v >= 0.08 && v <= 0.92) return v;
-    } catch {
-      /* ignore */
-    }
-    return 0.5;
-  }
   /** Editor share of flex grow (0–1); preview gets (1 - ratio). Default 0.5 → equal split after mins. */
   let splitRatio = $state(readStoredSplitRatio());
   let isResizing = $state(false);
@@ -551,14 +482,6 @@
     current: monaco.editor.IStandaloneCodeEditor | undefined;
   } = { current: undefined };
 
-  function selectAllInMonaco(ed: monaco.editor.IStandaloneCodeEditor) {
-    const model = ed.getModel();
-    if (!model) return;
-    const lastLine = model.getLineCount();
-    const endCol = model.getLineMaxColumn(lastLine);
-    ed.focus();
-    ed.setSelection(new monaco.Selection(1, 1, lastLine, endCol));
-  }
   let systemPrefersDark = $state(
     typeof window !== "undefined"
       ? window.matchMedia("(prefers-color-scheme: dark)").matches
@@ -586,20 +509,6 @@
   let translateY = $state(0);
   let folderFiles = $state<FolderExplorerNode[]>([]);
 
-  const SIDEBAR_W_KEY = "typst-editor-sidebar-width";
-  const SIDEBAR_MIN = 160;
-  const SIDEBAR_MAX = 560;
-  function readStoredSidebarWidth(): number {
-    try {
-      const v = parseInt(localStorage.getItem(SIDEBAR_W_KEY) ?? "", 10);
-      if (Number.isFinite(v)) {
-        return Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, v));
-      }
-    } catch {
-      /* ignore */
-    }
-    return 260;
-  }
   let sidebarWidth = $state(readStoredSidebarWidth());
   let sidebarVisible = $state(true);
   let previewVisible = $state(true);
@@ -1006,13 +915,6 @@
   let iosImportFolderPath = $state<string | null>(null);
   let iosImportFolderTitle = $state("");
   let iosImportFolderError = $state("");
-  function humanizeImportZipBasename(absPath: string): string {
-    const base = absPath.replace(/\/+$/, "").split("/").pop() || "";
-    const withoutZip = base.replace(/\.zip$/i, "");
-    const s = withoutZip.replace(/[-_]+/g, " ").replace(/\s+/g, " ").trim();
-    if (!s) return "Imported";
-    return s.replace(/\b\w/g, (c) => c.toUpperCase());
-  }
 
   async function runImportProjectFromZip() {
     try {
@@ -1199,17 +1101,6 @@
     }
   }
 
-  function normalizeFsPath(p: string): string {
-    return p.replace(/\\/g, "/").replace(/\/+$/, "");
-  }
-
-  function isExplorerPathInsideProject(filePath: string): boolean {
-    if (!iosProjectPath) return false;
-    const root = normalizeFsPath(iosProjectPath);
-    const norm = normalizeFsPath(filePath);
-    return norm.startsWith(`${root}/`);
-  }
-
   function openExplorerRenameModal(path: string) {
     const name = path.split(/[/\\]/).pop() || "";
     explorerRenameFromPath = path;
@@ -1275,7 +1166,8 @@
   }
 
   async function handleExplorerDeleteFile(path: string) {
-    if (!iosProjectPath || !isExplorerPathInsideProject(path)) return;
+    if (!iosProjectPath) return;
+    if (!isExplorerPathInsideProject(iosProjectPath, path)) return;
     const base = path.split(/[/\\]/).pop() || path;
     const dirty = openFiles.find((f) => f.path === path)?.isDirty;
     const ok = await ask(
@@ -1436,21 +1328,9 @@
     }
   }
 
-  async function compile(
-    text: string,
-    pathSnapshot: string | null,
-  ) {
+  async function compile(text: string, pathSnapshot: string | null) {
     try {
-      const result = await invoke<{
-        success: boolean;
-        pages: string[];
-        pageCount: number;
-        diagnostics: CompileDiagnostic[];
-        warnings: CompileDiagnostic[];
-      }>("compile_typst", {
-        content: text,
-        mainPath: pathSnapshot ?? null,
-      });
+      const result = await invokeCompileTypst(text, pathSnapshot);
       if (currentFilePath !== pathSnapshot || content !== text) return;
       compileWarnings = result.warnings ?? [];
       if (result.success) {
@@ -1470,17 +1350,7 @@
     } catch (err) {
       if (currentFilePath !== pathSnapshot || content !== text) return;
       compileWarnings = [];
-      compileDiagnostics = [
-        {
-          severity: "error",
-          message: String(err),
-          file: null,
-          line: null,
-          column: null,
-          hints: [],
-          trace: [],
-        },
-      ];
+      compileDiagnostics = [compileDiagnosticFromUnknownError(err)];
     }
   }
 
@@ -1492,157 +1362,15 @@
   async function handleExportTypstPayload(payload: ExportTypstKindPayload) {
     exportTypstModalOpen = false;
     if (exportBusy) return;
-    const base = currentFilePath
-      ? currentFilePath.replace(/\.typ$/i, "")
-      : "document";
-    const ext =
-      payload.kind === "pdf"
-        ? "pdf"
-        : payload.kind === "svg"
-          ? "svg"
-          : payload.kind === "png"
-            ? "png"
-            : "html";
-    const defaultPath = `${base}.${ext}`;
-    const filterName =
-      payload.kind === "pdf"
-        ? "PDF"
-        : payload.kind === "svg"
-          ? "SVG"
-          : payload.kind === "png"
-            ? "PNG"
-            : "HTML";
-
-    /** iOS/iPadOS: Rust `fs::write` cannot use security-scoped save URLs; `plugin-fs` can. */
-    if (projectsUseDocumentDir) {
-      exportBusy = true;
-      let stage: {
-        warnings: CompileDiagnostic[];
-        stagingId: string;
-        fileNames: string[];
-        bundleZip: boolean;
-      } | null = null;
-      try {
-        stage = await invoke<{
-          warnings: CompileDiagnostic[];
-          stagingId: string;
-          fileNames: string[];
-          bundleZip: boolean;
-        }>("export_typst_stage", {
-          content,
-          mainPath: currentFilePath ?? null,
-          outputPath: defaultPath,
-          exportKind: payload,
-        });
-        const saveExt = stage.bundleZip ? "zip" : ext;
-        const saveDefault = `${base}.${saveExt}`;
-        const path = await save({
-          defaultPath: saveDefault,
-          filters: stage.bundleZip
-            ? [{ name: "ZIP archive", extensions: ["zip"] }]
-            : [{ name: filterName, extensions: [ext] }],
-        });
-        if (path === null) return;
-        if (stage.fileNames.length === 1) {
-          const rel = exportStagingRelPath(
-            stage.stagingId,
-            stage.fileNames[0],
-          );
-          const data = await readFile(rel, { baseDir: BaseDirectory.Document });
-          await writeFile(path, data);
-        } else {
-          const dir = await dirname(path);
-          for (const name of stage.fileNames) {
-            const rel = exportStagingRelPath(stage.stagingId, name);
-            const data = await readFile(rel, { baseDir: BaseDirectory.Document });
-            const dest = await join(dir, name);
-            await writeFile(dest, data);
-          }
-        }
-        const w = stage.warnings ?? [];
-        const zipNote = stage.bundleZip
-          ? "\n\nMulti-page export is saved as a ZIP archive (one file per page)."
-          : "";
-        const title =
-          payload.kind === "pdf"
-            ? "Export PDF"
-            : payload.kind === "svg"
-              ? "Export SVG"
-              : payload.kind === "png"
-                ? "Export PNG"
-                : "Export HTML";
-        if (w.length > 0) {
-          const detail = w.map((d) => d.message).join("\n");
-          await message(
-            `Export finished.${zipNote}\n\nCompiler warnings (${w.length}):\n${detail}\n\nTip: this app does not load system fonts for Typst — import fonts in Settings → Typst fonts (or ship them in resources/fonts/bundled).`,
-            { title, kind: "info" },
-          );
-        } else {
-          await message(`Export finished.${zipNote}`, { title, kind: "info" });
-        }
-      } catch (e) {
-        await message(String(e), {
-          title: "Export failed",
-          kind: "error",
-        });
-      } finally {
-        if (stage) {
-          await invoke("export_typst_stage_cleanup", {
-            stagingId: stage.stagingId,
-          }).catch(() => {});
-        }
-        exportBusy = false;
-      }
-      return;
-    }
-
-    const path = await save({
-      defaultPath,
-      filters: [{ name: filterName, extensions: [ext] }],
+    await runTypstExportFromModal({
+      payload,
+      projectsUseDocumentDir,
+      content,
+      currentFilePath,
+      setExportBusy: (v) => {
+        exportBusy = v;
+      },
     });
-    if (path === null) return;
-    exportBusy = true;
-    try {
-      const exportResult = await invoke<{
-        warnings: CompileDiagnostic[];
-        outputPaths: string[];
-      }>("export_typst", {
-        content,
-        mainPath: currentFilePath ?? null,
-        outputPath: path,
-        exportKind: payload,
-      });
-      const w = exportResult?.warnings ?? [];
-      const outs = exportResult?.outputPaths ?? [path];
-      const filesNote =
-        outs.length > 1
-          ? `\n\nFiles written (${outs.length}):\n${outs.map((p) => `• ${p}`).join("\n")}`
-          : "";
-      const title =
-        payload.kind === "pdf"
-          ? "Export PDF"
-          : payload.kind === "svg"
-            ? "Export SVG"
-            : payload.kind === "png"
-              ? "Export PNG"
-              : "Export HTML";
-      if (w.length > 0) {
-        const detail = w.map((d) => d.message).join("\n");
-        await message(
-          `Export finished.${filesNote}\n\nCompiler warnings (${w.length}):\n${detail}\n\nTip: this app does not load system fonts for Typst — import fonts in Settings → Typst fonts (or ship them in resources/fonts/bundled).`,
-          { title, kind: "info" },
-        );
-      } else {
-        await message(`Export finished.${filesNote}`, { title, kind: "info" });
-      }
-    } catch (e) {
-      await message(String(e), {
-        title: "Export failed",
-        kind: "error",
-      });
-    } finally {
-      exportBusy = false;
-    }
   }
 
   $effect(() => {
@@ -1657,27 +1385,13 @@
 
   function handleEditorSplitResize(clientX: number) {
     if (!isResizing || !editorPreviewRegion) return;
-    const rect = editorPreviewRegion.getBoundingClientRect();
-    const innerW = rect.width - SPLIT_GRIP_PX;
-    if (innerW <= 0) return;
-    const minR = EDITOR_PANE_MIN / innerW;
-    const maxR = 1 - PREVIEW_PANE_MIN / innerW;
-    if (minR >= maxR) return;
-    const x = clientX - rect.left;
-    splitRatio = Math.min(maxR, Math.max(minR, x / innerW));
+    const r = editorSplitRatioFromPointer(clientX, editorPreviewRegion.getBoundingClientRect());
+    if (r != null) splitRatio = r;
   }
 
   function handleSidebarResize(clientX: number) {
     if (!isResizingSidebar || !mainLayout) return;
-    const { left, width: totalW } = mainLayout.getBoundingClientRect();
-    const editorPreviewMin = SPLIT_GRIP_PX + EDITOR_PANE_MIN + PREVIEW_PANE_MIN;
-    const max = Math.max(
-      SIDEBAR_MIN,
-      Math.min(SIDEBAR_MAX, totalW - editorPreviewMin),
-    );
-    sidebarWidth = Math.round(
-      Math.min(max, Math.max(SIDEBAR_MIN, clientX - left)),
-    );
+    sidebarWidth = sidebarWidthFromPointer(clientX, mainLayout.getBoundingClientRect());
   }
 
   /** Document-level pointer listeners: iOS/touch need this; passive:false avoids scroll stealing the drag */
@@ -1778,195 +1492,70 @@
     }
   }
 
-  async function handleShortcutCommand(action: ShortcutAction) {
-    switch (action) {
-      case "file.new": {
-        if (!iosProjectPath) {
-          await message(
-            "Create or open a project from the home screen first. Then use New File to add a .typ in that project.",
-            { title: "New file", kind: "info" },
-          );
-          break;
-        }
-        const mobile = await openMobileSaveAsModal("newFile");
-        if (mobile) break;
-        await handleSaveAs();
-        if (currentFilePath) {
-          const name = currentFilePath.split("/").pop() || "untitled.typ";
-          if (!openFiles.find((f) => f.path === currentFilePath)) {
-            openFiles = [
-              ...openFiles,
-              {
-                path: currentFilePath,
-                name,
-                content: defaultNewFileContent(appName),
-                isDirty: false,
-                lastSaved: new Date(),
-              },
-            ];
-          }
-          content = defaultNewFileContent(appName);
-          editor?.setValue(content);
-        }
-        break;
+  async function runNewFileShortcut() {
+    if (!iosProjectPath) {
+      await message(
+        "Create or open a project from the home screen first. Then use New File to add a .typ in that project.",
+        { title: "New file", kind: "info" },
+      );
+      return;
+    }
+    const mobile = await openMobileSaveAsModal("newFile");
+    if (mobile) return;
+    await handleSaveAs();
+    if (currentFilePath) {
+      const name = currentFilePath.split("/").pop() || "untitled.typ";
+      if (!openFiles.find((f) => f.path === currentFilePath)) {
+        openFiles = [
+          ...openFiles,
+          {
+            path: currentFilePath,
+            name,
+            content: defaultNewFileContent(appName),
+            isDirty: false,
+            lastSaved: new Date(),
+          },
+        ];
       }
-      case "file.open":
-        handleOpenFile();
-        break;
-      case "file.openFolder":
-        void hubImportFolderShortcut();
-        break;
-      case "file.save":
-        handleSave();
-        break;
-      case "file.saveAs":
-        handleSaveAs();
-        break;
-      case "file.exportTypst":
-        openExportTypstModal();
-        break;
-      case "view.zoomIn":
-        appZoomIn();
-        break;
-      case "view.zoomOut":
-        appZoomOut();
-        break;
-      case "view.resetZoom":
-        resetAppZoom();
-        break;
-      case "view.nextPage":
-        nextPage();
-        break;
-      case "view.prevPage":
-        prevPage();
-        break;
-      case "view.toggleSidebar":
-        sidebarVisible = !sidebarVisible;
-        break;
-      case "settings.shortcuts":
-        openSettings("shortcuts");
-        break;
-      case "edit.undo":
-        runEditUndo();
-        break;
-      case "edit.redo":
-        runEditRedo();
-        break;
+      content = defaultNewFileContent(appName);
+      editor?.setValue(content);
     }
   }
 
-  /** Same actions as Tauri desktop `menu-event` + Edit items for in-app menu (mobile). */
-  function dispatchMenuId(id: string) {
-    console.log("[typst-editor:menu] dispatchMenuId:", id);
-    switch (id) {
-      case "file-new":
-        void handleShortcutCommand("file.new");
-        break;
-      case "file-open":
-        void handleOpenFile();
-        break;
-      case "file-open-folder":
-        void hubImportFolderShortcut();
-        break;
-      case "desktop-back-start":
-        void leaveIosProject();
-        break;
-      case "desktop-open-project-folder":
-        void runOpenDesktopProjectFolder();
-        break;
-      case "ios-import-typ":
-        void iosHandleImportTyp();
-        break;
-      case "ios-export-project":
-        void iosHandleExportProject();
-        break;
-      case "ios-back-projects":
-        void leaveIosProject();
-        break;
-      case "ios-import-folder-project":
-        void runImportProjectFromZip();
-        break;
-      case "file-save":
-        void handleSave();
-        break;
-      case "file-save-as":
-        void handleSaveAs();
-        break;
-      case "file-export-typst":
-        openExportTypstModal();
-        break;
-      case "view-zoom-in":
-        appZoomIn();
-        break;
-      case "view-zoom-out":
-        appZoomOut();
-        break;
-      case "view-reset-zoom":
-        resetAppZoom();
-        break;
-      case "view-toggle-sidebar":
+  function buildCommandContext(): AppCommandContext {
+    return {
+      monacoMenuRef,
+      handleOpenFile,
+      hubImportFolderShortcut,
+      leaveIosProject,
+      runOpenDesktopProjectFolder,
+      iosHandleImportTyp,
+      iosHandleExportProject,
+      runImportProjectFromZip,
+      handleSave,
+      handleSaveAs,
+      openExportTypstModal,
+      appZoomIn,
+      appZoomOut,
+      resetAppZoom,
+      toggleSidebar: () => {
         sidebarVisible = !sidebarVisible;
-        break;
-      case "help-faq":
-        openSettings("faq");
-        break;
-      case "help-shortcuts":
-        openSettings("shortcuts");
-        break;
-      case "help-package-cache":
-        openSettings("packageCache");
-        break;
-      case "help-fonts":
-        openSettings("fonts");
-        break;
-      case "edit-select-all": {
-        requestAnimationFrame(() => {
-          const ed = monacoMenuRef.current;
-          const ae = document.activeElement as HTMLElement | null;
-          const inMonaco = ae?.closest?.(".monaco-editor") != null;
-          if (inMonaco && ed) {
-            selectAllInMonaco(ed);
-          } else if (ae instanceof HTMLInputElement || ae instanceof HTMLTextAreaElement) {
-            ae.select();
-          } else if (ae?.isContentEditable) {
-            const sel = document.getSelection();
-            const range = document.createRange();
-            range.selectNodeContents(ae);
-            sel?.removeAllRanges();
-            sel?.addRange(range);
-          } else if (ed) {
-            selectAllInMonaco(ed);
-          }
-        });
-        break;
-      }
-      case "edit-undo":
-        runEditUndo();
-        break;
-      case "edit-redo":
-        runEditRedo();
-        break;
-      case "edit-cut": {
-        const ed = monacoMenuRef.current;
-        ed?.focus();
-        ed?.trigger("keyboard", "editor.action.clipboardCutAction", null);
-        break;
-      }
-      case "edit-copy": {
-        const ed = monacoMenuRef.current;
-        ed?.focus();
-        ed?.trigger("keyboard", "editor.action.clipboardCopyAction", null);
-        break;
-      }
-      case "edit-paste": {
-        const ed = monacoMenuRef.current;
-        ed?.focus();
-        ed?.trigger("keyboard", "editor.action.clipboardPasteAction", null);
-        break;
-      }
-      default:
-        console.log("[typst-editor:menu] unhandled menu id:", id);
-    }
+      },
+      openSettings,
+      runEditUndo,
+      runEditRedo,
+      nextPage,
+      prevPage,
+      runNewFileShortcut,
+    };
+  }
+
+  async function handleShortcutCommand(action: ShortcutAction) {
+    await runShortcutAction(action, buildCommandContext());
+  }
+
+  function dispatchMenuId(id: string) {
+    dispatchAppMenuId(id, buildCommandContext());
   }
 
   let showInAppMenu = $state(false);
@@ -2096,13 +1685,13 @@
 
 
 <div
-  class="h-full max-h-full w-full overflow-clip bg-red {isResizing || isResizingSidebar
+  class="h-dvh max-h-dvh w-full overflow-clip bg-[var(--app-bg)] {isResizing || isResizingSidebar
     ? 'cursor-col-resize select-none'
     : ''}"
 >
   <!-- Transform scale (not CSS zoom) so the whole shell scales in Firefox / all WebViews; Monaco stays 14px. -->
   <div
-    class="h-full max-h-full  flex flex-col text-[var(--app-fg)] overflow-clip {isResizing || isResizingSidebar
+    class="flex flex-col text-[var(--app-fg)] overflow-clip {isResizing || isResizingSidebar
       ? 'cursor-col-resize select-none'
       : ''}"
     style:--app-zoom={appZoom}
@@ -2138,7 +1727,7 @@
     onTogglePreview={() => (previewVisible = !previewVisible)}
     suppressPreviewToggle={isPreviewOnlyMedia}
     showExportTypst={exportTypstAllowed}
-    // exportTypstEnabled={exportTypstAllowed}
+    exportTypstEnabled={exportTypstAllowed}
     {exportBusy}
     onOpenExportTypst={openExportTypstModal}
     onShowCommandPalette={!isProjectHub
