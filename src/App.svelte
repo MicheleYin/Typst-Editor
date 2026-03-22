@@ -327,7 +327,7 @@
         );
         const fileName = nextNonCollidingFileName(base, nameSet);
         const selected = await join(iosProjectPath, fileName);
-        const initial = defaultNewFileContent(appName);
+        const initial = defaultNewFileContent();
         await writeFileAtPath(selected, initial);
         error = "";
         closeSaveAsModal();
@@ -405,7 +405,7 @@
       }
       await snapshotCurrentPdfBeforeLeaving(null);
       currentFilePath = null;
-      content = defaultNewFileContent(appName);
+      content = defaultNewFileContent();
       editor?.setValue(content);
       if (currentFolder) void loadFolderFiles(currentFolder);
       touchProjectMetaUpdated();
@@ -884,7 +884,7 @@
       if (typ?.name) {
         await openFileByPath(`${p.absPath}/${typ.name}`);
       } else {
-        content = defaultNewFileContent(appName);
+        content = defaultNewFileContent();
         editor?.setValue(content);
       }
     }
@@ -1511,13 +1511,13 @@
           {
             path: currentFilePath,
             name,
-            content: defaultNewFileContent(appName),
+            content: defaultNewFileContent(),
             isDirty: false,
             lastSaved: new Date(),
           },
         ];
       }
-      content = defaultNewFileContent(appName);
+      content = defaultNewFileContent();
       editor?.setValue(content);
     }
   }
