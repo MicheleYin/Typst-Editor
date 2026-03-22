@@ -161,7 +161,7 @@
 
 <aside
   style:width="{width}px"
-  class="h-full min-h-0 shrink-0 bg-[var(--app-surface)] flex flex-col select-none text-[var(--app-fg-secondary)] overflow-hidden border-r border-[var(--app-border)] min-w-0 max-w-full"
+  class="min-h-0 shrink-0 bg-[var(--app-surface)] flex flex-col select-none text-[var(--app-fg-secondary)] overflow-hidden border-r border-[var(--app-border)] min-w-0 max-w-full"
 >
 
 

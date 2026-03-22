@@ -1685,13 +1685,13 @@
 
 
 <div
-  class="h-dvh max-h-dvh w-full overflow-clip bg-[var(--app-bg)] {isResizing || isResizingSidebar
+  class="h-dvh max-h-dvh w-full bg-[var(--app-bg)] overflow-clip {isResizing || isResizingSidebar
     ? 'cursor-col-resize select-none'
     : ''}"
 >
   <!-- Transform scale (not CSS zoom) so the whole shell scales in Firefox / all WebViews; Monaco stays 14px. -->
   <div
-    class="flex flex-col text-[var(--app-fg)] overflow-clip {isResizing || isResizingSidebar
+    class="h-fullmax-h-full flex flex-col text-[var(--app-fg)] overflow-clip {isResizing || isResizingSidebar
       ? 'cursor-col-resize select-none'
       : ''}"
     style:--app-zoom={appZoom}
@@ -1727,7 +1727,7 @@
     onTogglePreview={() => (previewVisible = !previewVisible)}
     suppressPreviewToggle={isPreviewOnlyMedia}
     showExportTypst={exportTypstAllowed}
-    exportTypstEnabled={exportTypstAllowed}
+    // exportTypstEnabled={exportTypstAllowed}
     {exportBusy}
     onOpenExportTypst={openExportTypstModal}
     onShowCommandPalette={!isProjectHub
@@ -1875,6 +1875,6 @@
     margin: 0;
     padding: 0;
     overflow: hidden;
-    overscroll-behavior: none;
+    overscroll-behavior: hidden;
   }
 </style>
