@@ -72,16 +72,13 @@
 
 <div
   bind:this={editorPreviewRegion}
-  class="flex-1 min-h-0 min-w-0 h-full overflow-hidden {isPreviewOnlyMedia
+  class="flex-1 min-h-0 min-w-0 {isPreviewOnlyMedia
     ? 'flex'
     : previewVisible
       ? 'grid'
       : 'flex'}"
   style:grid-template-columns={!isPreviewOnlyMedia && previewVisible
     ? `minmax(${editorPaneMin}px, ${Math.max(1, Math.round(splitRatio * 1000))}fr) ${splitGripPx}px minmax(${previewPaneMin}px, ${Math.max(1, Math.round((1 - splitRatio) * 1000))}fr)`
-    : undefined}
-  style:grid-template-rows={!isPreviewOnlyMedia && previewVisible
-    ? "minmax(0, 1fr)"
     : undefined}
 >
   {#if isPreviewOnlyMedia}
@@ -99,12 +96,12 @@
     </div>
   {:else}
     <div
-      class="h-full min-w-0 flex flex-col border-r border-[var(--app-border)] overflow-hidden {previewVisible
+      class="h-full relative min-w-0 flex flex-col border-r border-[var(--app-border)] overflow-hidden {previewVisible
         ? 'min-h-0'
         : 'flex-1 min-h-0'}"
     >
       <EditorQuickActions {editor} {typstFontFaces} {showTypstToolbar} />
-      <div class="flex-1 min-h-0 min-w-0 flex flex-col overflow-hidden">
+      <div class="relative flex-1 min-h-0 min-w-0 flex flex-col">
         <MonacoEditorPane
           initialValue={content}
           languageId={editorLanguageId}
@@ -124,7 +121,7 @@
         ariaLabel="Resize editor and preview"
       />
 
-      <div class="flex flex-col min-w-0 min-h-0 h-full overflow-hidden">
+      <div class="h-full flex flex-col min-w-0 min-h-0 overflow-hidden">
         <FilePreviewPane
           mode={filePreviewMode}
           appAppearance={resolvedAppearance}

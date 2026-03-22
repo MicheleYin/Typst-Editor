@@ -23,7 +23,6 @@
 html {
   height: 100%;
   height: 100vh;
-  height: 100dvh;
   overscroll-behavior: none;
 }
 
@@ -37,7 +36,6 @@ body,
   width: 100%;
   min-height: 100%;
   min-height: 100vh;
-  min-height: 100dvh;
   overflow: hidden;
   overscroll-behavior: none;
   background-color: var(--app-bg, #2c3142);
@@ -54,17 +52,9 @@ body,
   -webkit-user-select: auto;
 }
 
-/* iPad / WebKit: keep scroll inside Monaco instead of chaining to the webview / page. */
-.monaco-editor .monaco-scrollable-element {
-  overscroll-behavior: contain;
-}
-
 /* Helps limit double-tap zoom where viewport isn’t locked (e.g. dev in browser). */
 #app {
   touch-action: manipulation;
-  /* Flex column so the mounted app can use flex-1 + min-h-0 instead of fragile h-full chains (esp. iPad / WKWebView). */
-  display: flex;
-  flex-direction: column;
 }
 
 @supports (overflow: clip) {
