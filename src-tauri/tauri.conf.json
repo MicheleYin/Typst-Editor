@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Typst Editor",
-  "version": "1.4.0",
+  "version": "1.4.2",
   "identifier": "com.micheleyin.typst-editor",
   "build": {
     "beforeDevCommand": "bun run dev",
@@ -23,7 +23,9 @@
       "csp": null,
       "assetProtocol": {
         "enable": true,
-        "scope": ["**"]
+        "scope": [
+          "**"
+        ]
       }
     }
   },
@@ -31,7 +33,9 @@
     "active": true,
     "category": "DeveloperTool",
     "targets": "all",
-    "resources": ["resources/fonts/bundled"],
+    "resources": [
+      "resources/fonts/bundled"
+    ],
     "macOS": {
       "entitlements": "Entitlements.macos-direct.plist",
       "minimumSystemVersion": "12.0",
