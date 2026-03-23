@@ -471,7 +471,7 @@
   onmouseup={stopPan}
 />
 
-<div class="h-full w-full min-h-0 relative flex flex-col">
+<div class="flex-1 min-h-0 relative flex flex-col">
   {#if error}
     <div
       class="shrink-0 flex items-start gap-2 px-3 py-2 bg-red-950/90 text-red-200 text-xs border-b border-red-800"

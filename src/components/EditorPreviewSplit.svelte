@@ -82,7 +82,7 @@
     : undefined}
 >
   {#if isPreviewOnlyMedia}
-    <div class="h-full flex flex-col min-w-0 min-h-0 flex-1 overflow-hidden">
+    <div class="flex flex-col min-w-0 min-h-0 flex-1 overflow-hidden">
       <FilePreviewPane
         mode={filePreviewMode}
         appAppearance={resolvedAppearance}
@@ -96,7 +96,7 @@
     </div>
   {:else}
     <div
-      class="h-full relative min-w-0 flex flex-col border-r border-[var(--app-border)] overflow-hidden {previewVisible
+      class="relative min-w-0 flex flex-col border-r border-[var(--app-border)] overflow-hidden {previewVisible
         ? 'min-h-0'
         : 'flex-1 min-h-0'}"
     >
@@ -121,7 +121,7 @@
         ariaLabel="Resize editor and preview"
       />
 
-      <div class="h-full flex flex-col min-w-0 min-h-0 overflow-hidden">
+      <div class="flex flex-col min-w-0 min-h-0 overflow-hidden">
         <FilePreviewPane
           mode={filePreviewMode}
           appAppearance={resolvedAppearance}

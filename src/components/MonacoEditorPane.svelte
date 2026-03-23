@@ -124,4 +124,4 @@
   });
 </script>
 
-<div bind:this={host} class="h-full w-full min-h-0 flex-1"></div>
+<div bind:this={host} class="min-h-0 flex-1"></div>

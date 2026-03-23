@@ -142,7 +142,7 @@
 </script>
 
 <div
-  class="absolute inset-0 z-[60] flex flex-col items-center bg-[var(--app-bg)] p-6 pt-10 overflow-y-auto text-[var(--app-fg)]"
+  class="flex-1 w-full flex flex-col items-center bg-[var(--app-bg)] p-6 pt-10 overflow-y-auto text-[var(--app-fg)]"
 >
   <div class="max-w-5xl w-full space-y-8 animate-in fade-in zoom-in duration-500 pb-12 px-1">
     <div class="flex flex-col items-center space-y-4 text-center">

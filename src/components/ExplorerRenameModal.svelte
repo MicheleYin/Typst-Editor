@@ -31,9 +31,16 @@
       tabindex="0"
       onclick={(e) => e.stopPropagation()}
     >
-      <h2 id="explorer-rename-title" class="text-lg font-semibold text-[var(--app-fg)]">Rename file</h2>
+      <h2
+        id="explorer-rename-title"
+        class="text-lg font-semibold text-[var(--app-fg)]"
+      >
+        Rename file
+      </h2>
       <p class="text-sm text-[var(--app-fg-secondary)]">
-        New name in the same folder (include the extension, e.g. <code class="text-[10px]">.typ</code>).
+        New name in the same folder (include the extension, e.g. <code
+          class="text-[10px]">.typ</code
+        >).
       </p>
       <input
         type="text"
@@ -45,7 +52,9 @@
         onkeydown={(e) => e.key === "Enter" && void onConfirm()}
       />
       {#if error}
-        <p class="text-sm text-red-600 dark:text-red-400" role="alert">{error}</p>
+        <p class="text-sm text-red-600 dark:text-red-400" role="alert">
+          {error}
+        </p>
       {/if}
       <div class="flex justify-end gap-2 pt-2">
         <button

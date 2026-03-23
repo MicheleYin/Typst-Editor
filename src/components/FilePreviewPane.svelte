@@ -350,7 +350,7 @@
 
 {#if mode.kind === "typst"}
   <div
-    class="h-full w-full min-h-0 flex flex-col bg-[var(--app-surface)] overflow-hidden"
+    class="min-h-0 flex-1 flex flex-col bg-[var(--app-surface)] overflow-hidden"
     role="region"
     aria-label="Typst preview"
   >
@@ -376,7 +376,7 @@
   </div>
 {:else if mode.kind === "image"}
   <div
-    class="h-full w-full min-h-0 flex flex-col bg-[var(--app-surface)] overflow-hidden"
+    class="min-h-0 flex-1 flex flex-col bg-[var(--app-surface)] overflow-hidden"
     role="region"
     aria-label="Image preview"
   >
@@ -444,7 +444,7 @@
   </div>
 {:else if mode.kind === "pdf"}
   <div
-    class="h-full w-full min-h-0 flex flex-col bg-[var(--app-surface)] overflow-hidden"
+    class="min-h-0 flex-1 flex flex-col bg-[var(--app-surface)] overflow-hidden"
     role="region"
     aria-label="PDF preview with annotations"
   >
@@ -463,7 +463,7 @@
   </div>
 {:else if mode.kind === "markdown"}
   <div
-    class="h-full w-full min-h-0 flex flex-col bg-[var(--app-surface)] overflow-hidden"
+    class="min-h-0 flex-1 flex flex-col bg-[var(--app-surface)] overflow-hidden"
     role="region"
     aria-label="Markdown preview"
   >
@@ -480,7 +480,7 @@
   </div>
 {:else if mode.kind === "html"}
   <div
-    class="h-full w-full min-h-0 flex flex-col bg-[var(--app-surface)] overflow-hidden"
+    class="min-h-0 flex-1 flex flex-col bg-[var(--app-surface)] overflow-hidden"
     role="region"
     aria-label="HTML preview"
   >
@@ -497,7 +497,7 @@
   </div>
 {:else if mode.kind === "svg-inline"}
   <div
-    class="h-full w-full min-h-0 flex flex-col bg-[var(--app-surface)] overflow-hidden"
+    class="min-h-0 flex-1 flex flex-col bg-[var(--app-surface)] overflow-hidden"
     role="region"
     aria-label="SVG preview"
   >
@@ -570,7 +570,7 @@
   </div>
 {:else}
   <div
-    class="h-full w-full flex flex-col items-center justify-center gap-2 px-6 text-center text-[var(--app-fg-muted)] text-sm bg-[var(--app-surface)]"
+    class="flex-1 flex flex-col items-center justify-center gap-2 px-6 text-center text-[var(--app-fg-muted)] text-sm bg-[var(--app-surface)]"
   >
     <p class="text-[var(--app-fg-secondary)] font-medium">Preview</p>
     <p class="text-xs max-w-sm leading-relaxed">{mode.kind === "none" ? mode.hint : "No preview available."}</p>
