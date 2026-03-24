@@ -5,7 +5,7 @@ use std::io::Write;
 use std::path::Path;
 use std::path::PathBuf;
 
-use chrono::Datelike;
+use chrono::{Datelike, Timelike};
 use tauri::command;
 use tauri::path::BaseDirectory;
 #[cfg(desktop)]
@@ -45,7 +45,7 @@ use typst::utils::LazyHash;
 use typst::{Library, LibraryExt, World, WorldExt};
 use typst_html::HtmlDocument;
 use typst_html::html as typst_html_encode;
-use typst_pdf::{pdf, PdfOptions, PdfStandard, PdfStandards};
+use typst_pdf::{pdf, PdfOptions, PdfStandard, PdfStandards, Timestamp};
 use typst_kit::download::{Downloader, ProgressSink};
 use typst_kit::package::PackageStorage;
 
@@ -1020,9 +1020,19 @@ fn build_pdf_options(profile: &str, tagged_arg: bool) -> Result<PdfOptions<'stat
         tagged = true;
     }
     let standards = pdf_standards_for_profile(profile_key)?;
+    let now = chrono::Utc::now();
+    let dt = Datetime::from_ymd_hms(
+        now.year() as i32,
+        now.month() as u8,
+        now.day() as u8,
+        now.hour() as u8,
+        now.minute() as u8,
+        now.second() as u8,
+    );
+    let timestamp = Some(Timestamp::new_utc(dt.unwrap()));
     Ok(PdfOptions {
         ident: Smart::Auto,
-        timestamp: None,
+        timestamp,
         page_ranges: None,
         standards,
         tagged,

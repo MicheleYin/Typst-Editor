@@ -93,7 +93,9 @@
     desktopRecentTouch,
     desktopImportTypIntoProject,
   } from "./lib/desktopProjectFs";
-  import { exportStagingRelPath } from "./lib/appExportStaging";
+  import {
+    exportStagingRelPath,
+  } from "./lib/appExportStaging";
   import { ensureDefaultTypstExtension, nextNonCollidingFileName } from "./lib/appTypstFileNames";
   import { normalizeFsPath, isExplorerPathInsideProject } from "./lib/appExplorerPaths";
   import { humanizeImportZipBasename } from "./lib/appImportZip";
@@ -124,6 +126,7 @@
     type AppCommandContext,
   } from "./lib/appCommands";
   import { runTypstExportFromModal } from "./lib/appTypstExport";
+  import { isIpadOs } from "./lib/ipadOs";
   import pkg from "../package.json";
 
   let appName = $state(pkg.name);
@@ -682,7 +685,7 @@
         filters: [{ name: "ZIP archive", extensions: ["zip"] }],
       });
       if (path === null) return;
-      if (projectsUseDocumentDir) {
+      if (isIpadOs()) {
         const stage = await invoke<{
           stagingId: string;
           fileNames: string[];
@@ -695,19 +698,64 @@
             stage.fileNames[0] ?? "project.zip",
           );
           const data = await readFile(rel, { baseDir: BaseDirectory.Document });
-          await writeFile(path, data);
+          const file = new File([data], stage.fileNames[0] ?? "project.zip", {
+            type: "application/zip",
+          });
+          if (navigator.canShare && navigator.canShare({ files: [file] })) {
+            try {
+              await navigator.share({ files: [file], title: "Export Project" });
+            } catch (e) {
+              if ((e as Error).name !== "AbortError") {
+                throw e;
+              }
+            }
+          } else {
+            // Fallback
+            const path = await save({
+              defaultPath,
+              filters: [{ name: "ZIP archive", extensions: ["zip"] }],
+            });
+            if (path === null) return;
+            await writeFile(path, data);
+          }
         } finally {
           await invoke("export_typst_stage_cleanup", {
             stagingId: stage.stagingId,
           }).catch(() => {});
         }
       } else {
-        await desktopExportProjectZip(iosProjectPath, path);
+        const path = await save({
+          defaultPath,
+          filters: [{ name: "ZIP archive", extensions: ["zip"] }],
+        });
+        if (path === null) return;
+        if (projectsUseDocumentDir) {
+          const stage = await invoke<{
+            stagingId: string;
+            fileNames: string[];
+          }>("export_ios_project_zip_stage", {
+            folderId: iosProjectFolderId!,
+          });
+          try {
+            const rel = exportStagingRelPath(
+              stage.stagingId,
+              stage.fileNames[0] ?? "project.zip",
+            );
+            const data = await readFile(rel, { baseDir: BaseDirectory.Document });
+            await writeFile(path, data);
+          } finally {
+            await invoke("export_typst_stage_cleanup", {
+              stagingId: stage.stagingId,
+            }).catch(() => {});
+          }
+        } else {
+          await desktopExportProjectZip(iosProjectPath, path);
+        }
+        await message("All project files were saved to the ZIP.", {
+          title: "Export project",
+          kind: "info",
+        });
       }
-      await message("All project files were saved to the ZIP.", {
-        title: "Export project",
-        kind: "info",
-      });
       error = "";
     } catch (err) {
       await message(String(err), {
