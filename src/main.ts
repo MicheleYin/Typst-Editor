@@ -1,4 +1,8 @@
 import "./monaco-env";
+import { registerMonacoExternalLinkOpener } from "./lib/monacoLinkOpener";
+
+registerMonacoExternalLinkOpener();
+
 import { mount } from "svelte";
 import "./App.css";
 import "./theme.css";

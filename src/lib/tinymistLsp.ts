@@ -339,6 +339,16 @@ function ensureMonacoCommandStub(commandId: string): void {
   });
 }
 
+/** App has its own export flow; hide TinyMist’s PDF export code lens in Monaco. */
+function shouldHideTinyMistCodeLens(l: {
+  command?: { title?: string; command?: string };
+}): boolean {
+  const cmd = (l.command?.command ?? "").toLowerCase();
+  if (cmd.includes("exportpdf") || cmd.includes("export-pdf")) return true;
+  const title = (l.command?.title ?? "").toLowerCase();
+  return title.includes("pdf") && (title.includes("export") || title.includes("save"));
+}
+
 class TinyMistLspSession {
   private socket: WebSocket | undefined;
   private initResult: InitResult | undefined;
@@ -440,6 +450,28 @@ class TinyMistLspSession {
     this.notify("textDocument/didClose", { textDocument: { uri } });
     this.openDocs.delete(uri);
     monaco.editor.setModelMarkers(model, "tinymist", []);
+  }
+
+  /** Used by the eagerly registered formatter so Format Document works before `initialize` finishes. */
+  async getDocumentFormattingEdits(
+    model: monaco.editor.ITextModel,
+    options: monaco.languages.FormattingOptions,
+  ): Promise<monaco.languages.TextEdit[]> {
+    await this.openModel(model);
+    const resp = (await this.request("textDocument/formatting", {
+      textDocument: { uri: uriFromModel(model) },
+      options: {
+        tabSize: options.tabSize,
+        insertSpaces: options.insertSpaces,
+        trimTrailingWhitespace: true,
+        insertFinalNewline: true,
+        trimFinalNewlines: true,
+      },
+    })) as LspTextEdit[] | null;
+    return (resp ?? []).map((e) => ({
+      range: toMonacoRange(e.range),
+      text: e.newText,
+    }));
   }
 
   async shutdown(): Promise<void> {
@@ -707,30 +739,6 @@ class TinyMistLspSession {
       );
     }
 
-    if (cap.documentFormattingProvider !== false) {
-      this.providerDisposables.push(
-        monaco.languages.registerDocumentFormattingEditProvider(LANGUAGE_ID, {
-          provideDocumentFormattingEdits: async (model, options) => {
-            await this.openModel(model);
-            const resp = (await this.request("textDocument/formatting", {
-              textDocument: { uri: uriFromModel(model) },
-              options: {
-                tabSize: options.tabSize,
-                insertSpaces: options.insertSpaces,
-                trimTrailingWhitespace: true,
-                insertFinalNewline: true,
-                trimFinalNewlines: true,
-              },
-            })) as LspTextEdit[] | null;
-            return (resp ?? []).map((e) => ({
-              range: toMonacoRange(e.range),
-              text: e.newText,
-            }));
-          },
-        }),
-      );
-    }
-
     if (cap.codeActionProvider !== false) {
       this.providerDisposables.push(
         monaco.languages.registerCodeActionProvider(LANGUAGE_ID, {
@@ -930,25 +938,38 @@ class TinyMistLspSession {
             const resp = (await this.request("textDocument/codeLens", {
               textDocument: { uri: uriFromModel(model) },
             })) as { range: LspRange; command?: { title: string; command: string; arguments?: unknown[] } }[] | null;
-            const lenses = (resp ?? []).map((l) => {
-              if (l.command?.command) {
-                ensureMonacoCommandStub(l.command.command);
-              }
-              return {
-                range: toMonacoRange(l.range),
-                id: `${l.range.start.line}:${l.range.start.character}`,
-                command: l.command
-                  ? {
-                      id: l.command.command,
-                      title: l.command.title,
-                      arguments: l.command.arguments,
-                    }
-                  : undefined,
-              };
-            });
+            const lenses = (resp ?? [])
+              .filter((l) => !shouldHideTinyMistCodeLens(l))
+              .map((l) => {
+                if (l.command?.command) {
+                  ensureMonacoCommandStub(l.command.command);
+                }
+                return {
+                  range: toMonacoRange(l.range),
+                  id: `${l.range.start.line}:${l.range.start.character}`,
+                  command: l.command
+                    ? {
+                        id: l.command.command,
+                        title: l.command.title,
+                        arguments: l.command.arguments,
+                      }
+                    : undefined,
+                };
+              });
             return { lenses, dispose: () => {} };
           },
-          resolveCodeLens: async (_, codeLens) => codeLens,
+          resolveCodeLens: async (_, codeLens) => {
+            const cmd = codeLens.command;
+            if (
+              cmd &&
+              shouldHideTinyMistCodeLens({
+                command: { command: cmd.id, title: cmd.title },
+              })
+            ) {
+              return { ...codeLens, command: undefined };
+            }
+            return codeLens;
+          },
         }),
       );
     }
@@ -993,15 +1014,21 @@ class TinyMistLspSession {
     } catch {
       return;
     }
-    const msg = payload as JsonRpcResponse & JsonRpcNotification;
+    const msg = payload as JsonRpcResponse & JsonRpcNotification & { method?: string };
     if (typeof msg.id === "number") {
       const pending = this.pending.get(msg.id);
-      if (!pending) return;
-      this.pending.delete(msg.id);
-      if (msg.error) {
-        pending.reject(new Error(msg.error.message || "LSP request failed"));
-      } else {
-        pending.resolve(msg.result);
+      if (pending) {
+        this.pending.delete(msg.id);
+        if (msg.error) {
+          pending.reject(new Error(msg.error.message || "LSP request failed"));
+        } else {
+          pending.resolve(msg.result);
+        }
+        return;
+      }
+      if (typeof msg.method === "string") {
+        this.handleServerRequest(msg as JsonRpcRequest);
+        return;
       }
       return;
     }
@@ -1047,9 +1074,34 @@ class TinyMistLspSession {
     this.pending.clear();
   }
 
-  private send(message: JsonRpcRequest | JsonRpcNotification): void {
+  private send(message: JsonRpcRequest | JsonRpcNotification | JsonRpcResponse): void {
     const wire = JSON.stringify(message);
     this.socket?.send(wire);
+  }
+
+  /** Reply to server-initiated requests so TinyMist does not stall (dynamic registration, config, etc.). */
+  private handleServerRequest(req: JsonRpcRequest): void {
+    const { id, method, params } = req;
+    if (method === "client/registerCapability" || method === "client/unregisterCapability") {
+      this.send({ jsonrpc: "2.0", id, result: null });
+      return;
+    }
+    if (method === "workspace/configuration") {
+      const items =
+        (params as { items?: { section?: string | null }[] } | undefined)?.items ?? [];
+      const result = items.map(() => ({}));
+      this.send({ jsonrpc: "2.0", id, result });
+      return;
+    }
+    if (method === "window/workDoneProgress/create") {
+      this.send({ jsonrpc: "2.0", id, result: null });
+      return;
+    }
+    this.send({
+      jsonrpc: "2.0",
+      id,
+      error: { code: -32601, message: `Unhandled server request: ${method}` },
+    });
   }
 
   private request(method: string, params?: unknown): Promise<unknown> {
@@ -1069,6 +1121,38 @@ class TinyMistLspSession {
 
 const sessions = new Map<string, TinyMistLspSession>();
 
+let tinymistDocumentFormattingDisposable: monaco.IDisposable | undefined;
+
+function getOrCreateTinyMistSession(): TinyMistLspSession {
+  let s = sessions.get(LANGUAGE_ID);
+  if (!s) {
+    s = new TinyMistLspSession();
+    sessions.set(LANGUAGE_ID, s);
+  }
+  return s;
+}
+
+/** Register before LSP `initialize` completes so Format Document is available immediately. */
+function ensureTinyMistDocumentFormattingProvider(): void {
+  if (tinymistDocumentFormattingDisposable) return;
+  tinymistDocumentFormattingDisposable = monaco.languages.registerDocumentFormattingEditProvider(
+    LANGUAGE_ID,
+    {
+      provideDocumentFormattingEdits: async (model, options) => {
+        if (model.getLanguageId() !== LANGUAGE_ID) return [];
+        try {
+          return await getOrCreateTinyMistSession().getDocumentFormattingEdits(model, options);
+        } catch (e) {
+          console.warn("[tinymist-lsp] document format failed:", e);
+          return [];
+        }
+      },
+    },
+  );
+}
+
+ensureTinyMistDocumentFormattingProvider();
+
 type BoundSession = {
   dispose: () => void;
 };
@@ -1078,12 +1162,7 @@ export async function bindTinyMistToMonacoEditor(
 ): Promise<BoundSession | null> {
   const model = editor.getModel();
   if (!model || model.getLanguageId() !== LANGUAGE_ID) return null;
-  const key = LANGUAGE_ID;
-  let session = sessions.get(key);
-  if (!session) {
-    session = new TinyMistLspSession();
-    sessions.set(key, session);
-  }
+  const session = getOrCreateTinyMistSession();
   await session.openModel(model);
 
   const disposables: monaco.IDisposable[] = [];

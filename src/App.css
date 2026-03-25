@@ -52,6 +52,23 @@ body,
   -webkit-user-select: auto;
 }
 
+/**
+ * Appended to `document.body` by MonacoEditorPane (overflowWidgetsDomNode).
+ * Hovers / suggest / parameter hints must sit above the right-hand PDF preview grid column.
+ * Keep below Header (z-80), InAppMenu (z-250), modals (z-100+).
+ */
+.typst-monaco-overflow-root {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  pointer-events: none;
+  overflow: visible;
+}
+
+.typst-monaco-overflow-root * {
+  pointer-events: auto;
+}
+
 /* Helps limit double-tap zoom where viewport isn’t locked (e.g. dev in browser). */
 #app {
   touch-action: manipulation;

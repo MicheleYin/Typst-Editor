@@ -46,6 +46,7 @@
     let ed: monaco.editor.IStandaloneCodeEditor | undefined;
     let lspBinding: { dispose: () => void } | null = null;
     let cancelled = false;
+    let overflowWidgetsDomNode: HTMLDivElement | undefined;
 
     tick().then(() => {
       if (cancelled || !host) {
@@ -54,6 +55,11 @@
         }
         return;
       }
+
+      overflowWidgetsDomNode = document.createElement("div");
+      overflowWidgetsDomNode.className = "typst-monaco-overflow-root";
+      overflowWidgetsDomNode.setAttribute("aria-hidden", "true");
+      document.body.appendChild(overflowWidgetsDomNode);
 
       if (!typstRegistered) {
         monaco.languages.register({ id: "typst" });
@@ -82,10 +88,17 @@
         suggestOnTriggerCharacters: true,
         automaticLayout: true,
         "semanticHighlighting.enabled": true,
+        links: true,
+        /** Middle-click opens links without a modifier (Cmd/Ctrl+click still works). */
+        mouseMiddleClickAction: "openLink",
+        /** Hover/suggest above adjacent split panes (e.g. PDF). */
+        fixedOverflowWidgets: true,
+        overflowWidgetsDomNode,
       });
 
       if (cancelled) {
         ed.dispose();
+        overflowWidgetsDomNode.remove();
         ed = undefined;
         return;
       }
@@ -120,6 +133,7 @@
       disposeMonacoShortcutOverridesOnly();
       lspBinding?.dispose();
       ed?.dispose();
+      overflowWidgetsDomNode?.remove();
       editorInstance = undefined;
       onDispose?.();
     };
