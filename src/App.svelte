@@ -1888,6 +1888,9 @@
       />
     {/if}
 
+    <div
+      class="app-workspace-panel flex flex-1 min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-[var(--app-border)] m-2 mr-3 mb-3 mt-2"
+    >
     <EditorPreviewSplit
       bind:editorPreviewRegion
       isPreviewOnlyMedia={isPreviewOnlyMedia}
@@ -1924,6 +1927,7 @@
         monacoMenuRef.current = undefined;
       }}
     />
+    </div>
     {/if}
   </div>
   </div>

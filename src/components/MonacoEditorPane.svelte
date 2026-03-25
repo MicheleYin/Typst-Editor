@@ -57,7 +57,7 @@
       }
 
       overflowWidgetsDomNode = document.createElement("div");
-      overflowWidgetsDomNode.className = "typst-monaco-overflow-root";
+      overflowWidgetsDomNode.className = "typst-monaco-overflow-root monaco-component";
       overflowWidgetsDomNode.setAttribute("aria-hidden", "true");
       document.body.appendChild(overflowWidgetsDomNode);
 

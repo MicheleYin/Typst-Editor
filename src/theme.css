@@ -55,6 +55,10 @@
   --app-grip-hover: #c4b5e0;
   --app-grip-active: #c4b5e0;
   --app-dropdown-list-bg: #454c64;
+  /* Main editor + preview shell: raised surface over --app-bg */
+  --app-workspace-bg: #3d445a;
+  --app-workspace-shadow: 0 14px 48px rgba(0, 0, 0, 0.55),
+    0 4px 16px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(255, 255, 255, 0.07);
 }
 
 html[data-app-appearance="dark"] {
@@ -98,6 +102,9 @@ html[data-app-appearance="dark"] {
   --app-grip-hover: #c4b5e0;
   --app-grip-active: #c4b5e0;
   --app-dropdown-list-bg: #4d546c;
+  --app-workspace-bg: #3d445a;
+  --app-workspace-shadow: 0 14px 48px rgba(0, 0, 0, 0.55),
+    0 4px 16px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(255, 255, 255, 0.07);
 }
 
 html[data-app-appearance="light"] {
@@ -141,4 +148,7 @@ html[data-app-appearance="light"] {
   --app-grip-hover: #b8a8d8;
   --app-grip-active: #b8a8d8;
   --app-dropdown-list-bg: #f0ecf8;
+  --app-workspace-bg: #faf8fc;
+  --app-workspace-shadow: 0 12px 40px rgba(76, 58, 120, 0.12),
+    0 4px 14px rgba(0, 0, 0, 0.07), 0 0 0 1px rgba(255, 255, 255, 0.85);
 }

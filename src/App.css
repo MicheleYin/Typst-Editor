@@ -54,6 +54,7 @@ body,
 
 /**
  * Appended to `document.body` by MonacoEditorPane (overflowWidgetsDomNode).
+ * Also uses class `monaco-component` so Monaco’s --vscode-* theme variables apply here.
  * Hovers / suggest / parameter hints must sit above the right-hand PDF preview grid column.
  * Keep below Header (z-80), InAppMenu (z-250), modals (z-100+).
  */
@@ -67,6 +68,58 @@ body,
 
 .typst-monaco-overflow-root * {
   pointer-events: auto;
+}
+
+/**
+ * Monaco styles hovers/suggest/parameter hints as `.monaco-editor .monaco-hover` (etc.).
+ * With `overflowWidgetsDomNode` on `body`, those widgets are not under `.monaco-editor`, so
+ * built-in rules never apply — only the variables from `.monaco-component` are not enough.
+ * Mirror the minimal surface rules so theme vars resolve on the overflow subtree.
+ */
+.typst-monaco-overflow-root.monaco-component .monaco-resizable-hover {
+  border: 1px solid var(--vscode-editorHoverWidget-border);
+  border-radius: 3px;
+  box-sizing: content-box;
+}
+
+.typst-monaco-overflow-root.monaco-component .monaco-resizable-hover > .monaco-hover {
+  border: none;
+  border-radius: 0;
+}
+
+.typst-monaco-overflow-root.monaco-component .monaco-hover {
+  border: 1px solid var(--vscode-editorHoverWidget-border);
+  border-radius: 3px;
+  color: var(--vscode-editorHoverWidget-foreground);
+  background-color: var(--vscode-editorHoverWidget-background);
+}
+
+.typst-monaco-overflow-root.monaco-component .monaco-hover a {
+  color: var(--vscode-textLink-foreground);
+}
+
+.typst-monaco-overflow-root.monaco-component .monaco-hover a:hover {
+  color: var(--vscode-textLink-activeForeground);
+}
+
+.typst-monaco-overflow-root.monaco-component .suggest-widget,
+.typst-monaco-overflow-root.monaco-component .suggest-details {
+  border-style: solid;
+  border-width: 1px;
+  border-color: var(--vscode-editorSuggestWidget-border);
+  background-color: var(--vscode-editorSuggestWidget-background);
+}
+
+.typst-monaco-overflow-root.monaco-component .parameter-hints-widget {
+  color: var(--vscode-editorHoverWidget-foreground);
+  background-color: var(--vscode-editorHoverWidget-background);
+  border: 1px solid var(--vscode-editorHoverWidget-border);
+}
+
+/** Editor + preview region: tinted surface and layered shadow over app chrome */
+.app-workspace-panel {
+  background: var(--app-workspace-bg);
+  box-shadow: var(--app-workspace-shadow);
 }
 
 /* Helps limit double-tap zoom where viewport isn’t locked (e.g. dev in browser). */
