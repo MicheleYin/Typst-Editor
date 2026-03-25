@@ -11,14 +11,30 @@ use tauri::path::BaseDirectory;
 #[cfg(desktop)]
 use tauri::Emitter;
 use tauri::Manager;
+#[cfg(desktop)]
+use std::process::Stdio;
 // Native app menus are desktop-only in Tauri (`cfg(desktop)`). iOS/iPadOS builds omit
 // `set_menu` / `on_menu_event`; use web shortcuts + in-app UI on iPad for the same actions.
 #[cfg(desktop)]
 use std::sync::OnceLock;
 #[cfg(desktop)]
+use futures_util::{SinkExt, StreamExt};
+#[cfg(desktop)]
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
 #[cfg(desktop)]
 use tauri::Wry;
+#[cfg(desktop)]
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+#[cfg(desktop)]
+use tokio::net::TcpListener;
+#[cfg(desktop)]
+use tokio::process::Command as TokioCommand;
+#[cfg(desktop)]
+use tokio::sync::{broadcast, Mutex};
+#[cfg(desktop)]
+use tokio_tungstenite::accept_async;
+#[cfg(desktop)]
+use tokio_tungstenite::tungstenite::Message;
 
 /// Handle for **File → Export…** so the web layer can enable/disable it when the active tab changes.
 #[cfg(desktop)]
@@ -35,6 +51,215 @@ struct WorkspaceDependentMenuItems {
 
 #[cfg(desktop)]
 static WORKSPACE_DEPENDENT_MENU_ITEMS: OnceLock<WorkspaceDependentMenuItems> = OnceLock::new();
+
+#[cfg(desktop)]
+const TINYMIST_WS_ADDR: &str = "127.0.0.1:7676";
+#[cfg(desktop)]
+static TINYMIST_BRIDGE_STARTED: OnceLock<()> = OnceLock::new();
+
+#[cfg(desktop)]
+fn tinymist_sidecar_candidates(app: &tauri::AppHandle) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    let ext = if cfg!(target_os = "windows") { ".exe" } else { "" };
+    let triple = if cfg!(target_os = "macos") {
+        if cfg!(target_arch = "aarch64") {
+            "aarch64-apple-darwin"
+        } else {
+            "x86_64-apple-darwin"
+        }
+    } else if cfg!(target_os = "windows") {
+        if cfg!(target_arch = "aarch64") {
+            "aarch64-pc-windows-msvc"
+        } else {
+            "x86_64-pc-windows-msvc"
+        }
+    } else if cfg!(target_os = "linux") {
+        if cfg!(target_arch = "aarch64") {
+            "aarch64-unknown-linux-gnu"
+        } else {
+            "x86_64-unknown-linux-gnu"
+        }
+    } else {
+        "unknown"
+    };
+
+    if let Ok(rd) = app.path().resource_dir() {
+        out.push(rd.join("binaries").join(format!("tinymist{ext}")));
+        out.push(rd.join("binaries").join(format!("tinymist-{triple}{ext}")));
+    }
+    if let Ok(cd) = std::env::current_dir() {
+        out.push(cd.join("binaries").join(format!("tinymist{ext}")));
+        out.push(cd.join("binaries").join(format!("tinymist-{triple}{ext}")));
+        out.push(
+            cd.join("src-tauri")
+                .join("binaries")
+                .join(format!("tinymist{ext}")),
+        );
+        out.push(
+            cd.join("src-tauri")
+                .join("binaries")
+                .join(format!("tinymist-{triple}{ext}")),
+        );
+    }
+    out
+}
+
+#[cfg(desktop)]
+fn resolve_tinymist_binary(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    tinymist_sidecar_candidates(app)
+        .into_iter()
+        .find(|p| p.is_file())
+        .ok_or_else(|| {
+            "TinyMist sidecar not found. Add it under src-tauri/binaries and configure bundle.externalBin.".into()
+        })
+}
+
+#[cfg(desktop)]
+fn try_decode_lsp_message(buf: &[u8]) -> Option<(usize, String)> {
+    let sep = b"\r\n\r\n";
+    let head_end = buf.windows(sep.len()).position(|w| w == sep)?;
+    let headers = std::str::from_utf8(&buf[..head_end]).ok()?;
+    let mut len = None;
+    for line in headers.split("\r\n") {
+        if let Some((k, v)) = line.split_once(':') {
+            if k.trim().eq_ignore_ascii_case("content-length") {
+                len = v.trim().parse::<usize>().ok();
+            }
+        }
+    }
+    let content_len = len?;
+    let body_start = head_end + sep.len();
+    let body_end = body_start.checked_add(content_len)?;
+    if buf.len() < body_end {
+        return None;
+    }
+    let text = String::from_utf8(buf[body_start..body_end].to_vec()).ok()?;
+    Some((body_end, text))
+}
+
+#[cfg(desktop)]
+fn start_tinymist_sidecar_bridge(app: &tauri::AppHandle) -> Result<(), String> {
+    if TINYMIST_BRIDGE_STARTED.get().is_some() {
+        return Ok(());
+    }
+    let bin = resolve_tinymist_binary(app)?;
+    let _ = TINYMIST_BRIDGE_STARTED.set(());
+
+    tauri::async_runtime::spawn(async move {
+        let mut child = match TokioCommand::new(&bin)
+            .arg("lsp")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+        {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("typst-editor: failed to spawn tinymist sidecar: {e}");
+                return;
+            }
+        };
+
+        let Some(child_in) = child.stdin.take() else {
+            eprintln!("typst-editor: tinymist stdin unavailable");
+            return;
+        };
+        let Some(mut child_out) = child.stdout.take() else {
+            eprintln!("typst-editor: tinymist stdout unavailable");
+            return;
+        };
+        let Some(mut child_err) = child.stderr.take() else {
+            eprintln!("typst-editor: tinymist stderr unavailable");
+            return;
+        };
+
+        tauri::async_runtime::spawn(async move {
+            let mut buf = vec![0u8; 4096];
+            loop {
+                match child_err.read(&mut buf).await {
+                    Ok(0) => break,
+                    Ok(n) => eprintln!(
+                        "tinymist[stderr]: {}",
+                        String::from_utf8_lossy(&buf[..n]).trim_end()
+                    ),
+                    Err(_) => break,
+                }
+            }
+        });
+
+        let stdin = std::sync::Arc::new(Mutex::new(child_in));
+        let (tx, _) = broadcast::channel::<String>(256);
+
+        let tx_out = tx.clone();
+        tauri::async_runtime::spawn(async move {
+            let mut read_buf = vec![0u8; 8192];
+            let mut acc: Vec<u8> = Vec::new();
+            loop {
+                match child_out.read(&mut read_buf).await {
+                    Ok(0) => break,
+                    Ok(n) => {
+                        acc.extend_from_slice(&read_buf[..n]);
+                        while let Some((consumed, msg)) = try_decode_lsp_message(&acc) {
+                            let _ = tx_out.send(msg);
+                            acc.drain(..consumed);
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+        });
+
+        let listener = match TcpListener::bind(TINYMIST_WS_ADDR).await {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("typst-editor: tinyMist ws bridge bind failed on {TINYMIST_WS_ADDR}: {e}");
+                return;
+            }
+        };
+        eprintln!("typst-editor: tinymist lsp ws bridge listening on ws://{TINYMIST_WS_ADDR}");
+
+        loop {
+            let Ok((stream, _)) = listener.accept().await else {
+                continue;
+            };
+            let ws = match accept_async(stream).await {
+                Ok(ws) => ws,
+                Err(_) => continue,
+            };
+            let (mut ws_write, mut ws_read) = ws.split();
+            let mut rx = tx.subscribe();
+            let stdin_for_ws = stdin.clone();
+
+            tauri::async_runtime::spawn(async move {
+                while let Ok(msg) = rx.recv().await {
+                    if ws_write.send(Message::Text(msg)).await.is_err() {
+                        break;
+                    }
+                }
+            });
+
+            tauri::async_runtime::spawn(async move {
+                while let Some(Ok(msg)) = ws_read.next().await {
+                    if !msg.is_text() {
+                        continue;
+                    }
+                    let Ok(text) = msg.into_text() else {
+                        continue;
+                    };
+                    let payload = text.as_str();
+                    let framed = format!("Content-Length: {}\r\n\r\n{}", payload.len(), payload);
+                    let mut guard = stdin_for_ws.lock().await;
+                    if guard.write_all(framed.as_bytes()).await.is_err() {
+                        break;
+                    }
+                    let _ = guard.flush().await;
+                }
+            });
+        }
+    });
+
+    Ok(())
+}
 use typst::diag::{FileError, FileResult, Severity, SourceDiagnostic};
 use typst::foundations::{Bytes, Datetime, Smart};
 use typst::layout::PagedDocument;
@@ -2727,6 +2952,9 @@ pub fn run() {
             }
             #[cfg(desktop)]
             {
+            if let Err(e) = start_tinymist_sidecar_bridge(&handle) {
+                eprintln!("typst-editor: TinyMist bridge unavailable: {e}");
+            }
             let app_menu_title = handle.package_info().name.clone();
 
             // File Menu (project-based app)

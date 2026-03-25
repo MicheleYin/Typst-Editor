@@ -33,6 +33,7 @@
     typstFontFaces,
     showTypstToolbar,
     content,
+    currentFilePath,
     editorLanguageId,
     readOnly,
     monacoThemeResolved,
@@ -61,6 +62,7 @@
     typstFontFaces: TypstFontFace[];
     showTypstToolbar: boolean;
     content: string;
+    currentFilePath: string | null;
     editorLanguageId: string;
     readOnly: boolean;
     monacoThemeResolved: string;
@@ -104,6 +106,7 @@
       <div class="relative flex-1 min-h-0 min-w-0 flex flex-col">
         <MonacoEditorPane
           initialValue={content}
+          filePath={currentFilePath}
           languageId={editorLanguageId}
           {readOnly}
           monacoTheme={monacoThemeResolved}

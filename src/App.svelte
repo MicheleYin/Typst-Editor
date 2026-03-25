@@ -1910,6 +1910,7 @@
       typstFontFaces={typstFontFaces}
       showTypstToolbar={!isCurrentBinary && !!(currentFilePath && isTypstPath(currentFilePath))}
       {content}
+      {currentFilePath}
       editorLanguageId={editorLanguageId}
       readOnly={isCurrentBinary}
       monacoThemeResolved={monacoThemeResolved}

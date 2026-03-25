@@ -2,6 +2,7 @@
   import { onMount, tick } from "svelte";
   import * as monaco from "monaco-editor";
   import * as typstLanguage from "../typst-language";
+  import { bindTinyMistToMonacoEditor } from "../lib/tinymistLsp";
   import {
     discoverMonacoActions,
     ensureAppShortcutMetadataInStore,
@@ -16,6 +17,7 @@
 
   let {
     initialValue,
+    filePath = null,
     languageId = "typst",
     readOnly = false,
     monacoTheme,
@@ -24,6 +26,7 @@
     onDispose,
   } = $props<{
     initialValue: string;
+    filePath?: string | null;
     languageId?: string;
     readOnly?: boolean;
     monacoTheme: string;
@@ -41,6 +44,7 @@
 
   onMount(() => {
     let ed: monaco.editor.IStandaloneCodeEditor | undefined;
+    let lspBinding: { dispose: () => void } | null = null;
     let cancelled = false;
 
     tick().then(() => {
@@ -53,7 +57,6 @@
 
       if (!typstRegistered) {
         monaco.languages.register({ id: "typst" });
-        monaco.languages.setMonarchTokensProvider("typst", typstLanguage.language);
         monaco.languages.setLanguageConfiguration("typst", typstLanguage.conf);
         typstRegistered = true;
       }
@@ -61,15 +64,24 @@
       monaco.editor.defineTheme(MONACO_THEME_ID_LIGHT, MONACO_CAT_LIGHT);
       monaco.editor.defineTheme(MONACO_THEME_ID_DARK, MONACO_CAT_DARK);
 
+      const initialUri = filePath
+        ? monaco.Uri.file(filePath)
+        : monaco.Uri.parse("untitled:/main.typ");
+      const model =
+        monaco.editor.getModel(initialUri) ??
+        monaco.editor.createModel(initialValue, languageId, initialUri);
+
       ed = monaco.editor.create(host, {
-        value: initialValue,
-        language: languageId,
+        model,
         theme: monacoTheme,
         readOnly,
         minimap: { enabled: false },
         fontSize: 14,
         wordWrap: "on",
+        quickSuggestions: true,
+        suggestOnTriggerCharacters: true,
         automaticLayout: true,
+        "semanticHighlighting.enabled": true,
       });
 
       if (cancelled) {
@@ -81,6 +93,16 @@
       ed.onDidChangeModelContent(() => {
         onContentChange(ed!.getValue());
       });
+
+      if (languageId === "typst") {
+        void bindTinyMistToMonacoEditor(ed)
+          .then((binding) => {
+            lspBinding = binding;
+          })
+          .catch((e) => {
+            console.warn("TinyMist LSP disabled:", e);
+          });
+      }
 
       try {
         discoverMonacoActions(ed);
@@ -96,6 +118,7 @@
     return () => {
       cancelled = true;
       disposeMonacoShortcutOverridesOnly();
+      lspBinding?.dispose();
       ed?.dispose();
       editorInstance = undefined;
       onDispose?.();
@@ -113,8 +136,31 @@
     const ed = editorInstance;
     const id = languageId;
     if (ed) {
-      const m = ed.getModel();
-      if (m) monaco.editor.setModelLanguage(m, id);
+      const uri = filePath
+        ? monaco.Uri.file(filePath)
+        : monaco.Uri.parse("untitled:/main.typ");
+      const current = ed.getModel();
+      let next = monaco.editor.getModel(uri);
+      if (!next) {
+        next = monaco.editor.createModel(
+          current?.getValue() ?? initialValue,
+          id,
+          uri,
+        );
+      } else if (current && next !== current && next.getValue() !== current.getValue()) {
+        next.pushEditOperations(
+          [],
+          [
+            {
+              range: next.getFullModelRange(),
+              text: current.getValue(),
+            },
+          ],
+          () => null,
+        );
+      }
+      if (ed.getModel() !== next) ed.setModel(next);
+      monaco.editor.setModelLanguage(next, id);
     }
   });
 

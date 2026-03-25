@@ -26,6 +26,24 @@ export const conf: languages.LanguageConfiguration = {
     { open: "`", close: "`" },
     { open: "$", close: "$" },
   ],
+  onEnterRules: [
+    {
+      beforeText: /^\s*\/\/\/.*$/,
+      action: { indentAction: languages.IndentAction.None, appendText: "/// " },
+    },
+    {
+      beforeText: /^\s*\/\/!.*$/,
+      action: { indentAction: languages.IndentAction.None, appendText: "//! " },
+    },
+    {
+      beforeText: /^\s*\/\/(?![/!]).*$/,
+      action: { indentAction: languages.IndentAction.None, appendText: "// " },
+    },
+    {
+      beforeText: /^.*\$.+\$$/,
+      action: { indentAction: languages.IndentAction.Indent },
+    },
+  ],
 };
 
 export const language: languages.IMonarchLanguage = {
@@ -55,6 +73,7 @@ export const language: languages.IMonarchLanguage = {
     "or",
     "not",
   ],
+  
 
   tokenizer: {
     root: [

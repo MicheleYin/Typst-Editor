@@ -1,3 +1,4 @@
+import "./monaco-env";
 import { mount } from "svelte";
 import "./App.css";
 import "./theme.css";
