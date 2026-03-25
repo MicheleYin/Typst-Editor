@@ -99,5 +99,113 @@ export function vscodeJsonToMonacoThemeData(
     { token: "delimiter.bracket", foreground: pick([/punctuation/], fg) },
   ];
 
+  appendSemanticTokenColorsFromVscodeTheme(o.semanticTokenColors, rules);
+  rules.push(...defaultLspSemanticTokenThemeRules(light, fg));
+  rules.push(...tinymistSemanticTokenThemeRules(light, fg));
+
   return { base, inherit: true, rules, colors };
+}
+
+/** VS Code `semanticTokenColors` → Monaco token rules (`token` = semantic selector). */
+function appendSemanticTokenColorsFromVscodeTheme(
+  semantic: unknown,
+  rules: monaco.editor.ITokenThemeRule[],
+): void {
+  if (!semantic || typeof semantic !== "object" || Array.isArray(semantic)) return;
+  for (const [key, val] of Object.entries(semantic as Record<string, unknown>)) {
+    if (!key.trim()) continue;
+    if (typeof val === "string") {
+      rules.push({ token: key, foreground: stripHash(val) });
+    } else if (val && typeof val === "object") {
+      const v = val as { foreground?: string; fontStyle?: string };
+      if (v.foreground) {
+        rules.push({
+          token: key,
+          foreground: stripHash(v.foreground),
+          fontStyle: v.fontStyle,
+        });
+      }
+    }
+  }
+}
+
+/**
+ * TinyMist / LSP semantic highlighting uses standard type names from the server legend.
+ * Without matching theme rules, Monaco keeps default text color (looks like “no highlight”).
+ */
+function defaultLspSemanticTokenThemeRules(
+  light: boolean,
+  editorFg: string,
+): monaco.editor.ITokenThemeRule[] {
+  const fg = stripHash(editorFg);
+  const keyword = light ? "0000ff" : "c586c0";
+  const comment = light ? "008000" : "6a9955";
+  const stringC = light ? "a31515" : "ce9178";
+  const numberC = light ? "098658" : "b5cea8";
+  const typeC = light ? "267f99" : "4ec9b0";
+  const fnC = light ? "795e26" : "dcdcaa";
+  const param = light ? "001080" : "9cdcfe";
+
+  return [
+    { token: "namespace", foreground: typeC },
+    { token: "type", foreground: typeC },
+    { token: "class", foreground: typeC },
+    { token: "enum", foreground: typeC },
+    { token: "interface", foreground: typeC },
+    { token: "struct", foreground: typeC },
+    { token: "typeParameter", foreground: typeC },
+    { token: "parameter", foreground: param },
+    { token: "variable", foreground: fg },
+    { token: "property", foreground: param },
+    { token: "enumMember", foreground: light ? "0070c1" : "4fc1ff" },
+    { token: "decorator", foreground: fnC },
+    { token: "event", foreground: fnC },
+    { token: "function", foreground: fnC },
+    { token: "method", foreground: fnC },
+    { token: "macro", foreground: fnC },
+    { token: "keyword", foreground: keyword },
+    { token: "modifier", foreground: keyword },
+    { token: "comment", foreground: comment },
+    { token: "string", foreground: stringC },
+    { token: "number", foreground: numberC },
+    { token: "regexp", foreground: stringC },
+    { token: "operator", foreground: fg },
+  ];
+}
+
+/**
+ * TinyMist adds non-standard semantic token type names (see `tinymist-query` semantic_tokens.rs).
+ * Without these, most Typst markup maps to types Monaco has no color rule for → looks unhighlighted.
+ */
+function tinymistSemanticTokenThemeRules(
+  light: boolean,
+  editorFg: string,
+): monaco.editor.ITokenThemeRule[] {
+  const fg = stripHash(editorFg);
+  const stringC = light ? "a31515" : "ce9178";
+  const heading = light ? "267f99" : "4ec9b0";
+  const link = light ? "0000ff" : "3794ff";
+  const label = light ? "795e26" : "dcdcaa";
+  const error = light ? "b00000" : "f44747";
+  const pol = light ? "001080" : "9cdcfe";
+
+  return [
+    { token: "bool", foreground: light ? "0000ff" : "569cd6" },
+    { token: "punct", foreground: fg },
+    { token: "escape", foreground: stringC },
+    { token: "link", foreground: link },
+    { token: "raw", foreground: stringC },
+    { token: "label", foreground: label },
+    { token: "ref", foreground: link },
+    { token: "heading", foreground: heading },
+    { token: "marker", foreground: light ? "001080" : "9cdcfe" },
+    { token: "term", foreground: fg },
+    { token: "delim", foreground: light ? "0431fa" : "d4d4d4" },
+    { token: "pol", foreground: pol },
+    { token: "error", foreground: error },
+    { token: "text", foreground: fg },
+    { token: "*.strong", fontStyle: "bold" },
+    { token: "*.emph", fontStyle: "italic" },
+    { token: "*.math", foreground: stringC },
+  ];
 }
