@@ -40,9 +40,8 @@
     },
     "core:event:allow-listen",
     "core:event:allow-emit",
-    "window-state:default"
-
-
+    "window-state:default",
+    "os:allow-platform"
 
   ]
 }

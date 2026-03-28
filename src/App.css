@@ -119,7 +119,7 @@ body,
 /** Editor + preview region: tinted surface and layered shadow over app chrome */
 .app-workspace-panel {
   background: var(--app-workspace-bg);
-  box-shadow: var(--app-workspace-shadow);
+  /* box-shadow: var(--app-workspace-shadow); */
 }
 
 /* Helps limit double-tap zoom where viewport isn’t locked (e.g. dev in browser). */

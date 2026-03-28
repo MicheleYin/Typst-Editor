@@ -1,5 +1,7 @@
 import * as monaco from "monaco-editor";
 
+import { readUriForTinymist, wasmResolvePackage } from "./tinymistWasmFs";
+
 type JsonRpcRequest = {
   jsonrpc: "2.0";
   id: number;
@@ -107,6 +109,43 @@ function getTinymistWsUrl(): string {
   return DEFAULT_TINYMIST_WS;
 }
 
+function isTauriApp(): boolean {
+  return typeof globalThis !== "undefined" && "__TAURI_INTERNALS__" in globalThis;
+}
+
+/**
+ * - **Browser-only `vite` dev** (`bun run dev`): WASM (no native tinymist sidecar on :7676).
+ * - **Tauri macOS / iOS**: WASM (App Store–safe).
+ * - **Tauri Windows / Linux**: native sidecar + WebSocket unless forced.
+ * Override with `VITE_TINYMIST_USE_WASM=true|false`.
+ */
+async function tinymistUsesWasmTransport(): Promise<boolean> {
+  const viteEnv = import.meta as ImportMeta & { env?: Record<string, string | boolean> };
+  const env = viteEnv.env?.VITE_TINYMIST_USE_WASM;
+  if (env === "true" || env === "1") return true;
+  if (env === "false" || env === "0") return false;
+  if (viteEnv.env?.DEV === true && !isTauriApp()) {
+    return true;
+  }
+  if (!isTauriApp()) return false;
+  try {
+    const { platform } = await import("@tauri-apps/plugin-os");
+    const p = await platform();
+    return p === "macos" || p === "ios";
+  } catch {
+    return false;
+  }
+}
+
+/** TinyMist WASM returns LSP `ResponseError` objects on failure (not JSON-RPC envelopes). */
+function isLikelyWasmLspError(v: unknown): v is { code: number; message: string } {
+  if (v == null || typeof v !== "object") return false;
+  const o = v as Record<string, unknown>;
+  if (typeof o.code !== "number" || typeof o.message !== "string") return false;
+  if ("capabilities" in o || "contents" in o) return false;
+  return true;
+}
+
 function uriFromModel(model: monaco.editor.ITextModel): string {
   const asString = model.uri.toString();
   if (asString && asString !== "inmemory://model/1") return asString;
@@ -181,6 +220,26 @@ function mapSymbolKind(kind = 13): monaco.languages.SymbolKind {
     26: monaco.languages.SymbolKind.TypeParameter,
   };
   return map[k] ?? monaco.languages.SymbolKind.Variable;
+}
+
+/** LSP 3.17+ may send `label` as a string or a structured object; Monaco needs a string. */
+function lspCompletionItemDisplayLabel(raw: Record<string, unknown>): string {
+  const labelField = raw.label;
+  if (typeof labelField === "string" && labelField.length > 0) return labelField;
+  if (labelField && typeof labelField === "object" && labelField !== null && "label" in labelField) {
+    const inner = (labelField as { label?: unknown }).label;
+    if (typeof inner === "string" && inner.length > 0) return inner;
+  }
+  const ins = raw.insertText;
+  if (typeof ins === "string" && ins.length > 0) return ins;
+  const ft = raw.filterText;
+  if (typeof ft === "string" && ft.length > 0) return ft;
+  const te = raw.textEdit;
+  if (te && typeof te === "object" && te !== null && "newText" in te) {
+    const nt = (te as { newText?: unknown }).newText;
+    if (typeof nt === "string" && nt.length > 0) return nt;
+  }
+  return "";
 }
 
 function mapCompletionItemKind(kind?: number): monaco.languages.CompletionItemKind {
@@ -349,8 +408,18 @@ function shouldHideTinyMistCodeLens(l: {
   return title.includes("pdf") && (title.includes("export") || title.includes("save"));
 }
 
+type WasmTinymistBridge = {
+  on_request(method: string, js_params: unknown): unknown;
+  on_notification(method: string, js_params: unknown): void;
+  on_response(js_result: unknown): void;
+  on_event(event_id: number): void;
+  free(): void;
+};
+
 class TinyMistLspSession {
   private socket: WebSocket | undefined;
+  private wasmBridge: WasmTinymistBridge | undefined;
+  private wasmEventQueue: number[] = [];
   private initResult: InitResult | undefined;
   private idSeq = 1;
   private readonly pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
@@ -358,10 +427,118 @@ class TinyMistLspSession {
   private readonly openDocs = new Set<string>();
   private providerDisposables: monaco.IDisposable[] = [];
 
+  private buildInitializeParams(model: monaco.editor.ITextModel): Record<string, unknown> {
+    const rootUri =
+      model.uri.scheme === "file"
+        ? monaco.Uri.file(model.uri.path.split("/").slice(0, -1).join("/") || "/").toString()
+        : null;
+    return {
+      processId: null,
+      clientInfo: { name: "typst-editor", version: "0.1.0" },
+      locale: "en",
+      rootUri,
+      capabilities: {
+        textDocument: {
+          hover: { contentFormat: ["markdown", "plaintext"] },
+          definition: { linkSupport: true },
+          references: {},
+          documentSymbol: { hierarchicalDocumentSymbolSupport: true },
+          foldingRange: {},
+          rename: {},
+          publishDiagnostics: { relatedInformation: true },
+          semanticTokens: {
+            requests: { full: true },
+            tokenTypes: LSP_SEMANTIC_TOKEN_TYPES,
+            tokenModifiers: LSP_SEMANTIC_TOKEN_MODIFIERS,
+            formats: ["relative"],
+          },
+          inlayHint: {},
+          codeAction: { codeActionLiteralSupport: { codeActionKind: { valueSet: [""] } } },
+          documentLink: {},
+          colorProvider: {},
+          codeLens: {},
+          signatureHelp: {},
+          formatting: {},
+        },
+        workspace: { symbol: {} },
+      },
+      initializationOptions: {},
+    };
+  }
+
   async ensureConnected(model: monaco.editor.ITextModel): Promise<void> {
     if (this.initPromise) return this.initPromise;
+    const useWasm = await tinymistUsesWasmTransport();
+    this.initPromise = useWasm ? this.connectWasm(model) : this.connectWebSocket(model);
+    return this.initPromise;
+  }
+
+  private async connectWasm(model: monaco.editor.ITextModel): Promise<void> {
+    try {
+      const [tinymistMod, wasmMod] = await Promise.all([
+        import("tinymist-web"),
+        import("tinymist-web/pkg/tinymist_bg.wasm?url"),
+      ]);
+      const initWasm = tinymistMod.default;
+      const { TinymistLanguageServer } = tinymistMod;
+      const wasmUrl = (wasmMod as { default: string }).default;
+      // WKWebView / Tauri asset protocol: `instantiateStreaming` can fail with
+      // TypeError: 'application/wasm' is not a valid JavaScript MIME type.
+      // Passing an ArrayBuffer skips streaming and uses `WebAssembly.instantiate`.
+      const wasmBytes = await fetch(wasmUrl).then((r) => {
+        if (!r.ok) throw new Error(`TinyMist WASM fetch failed: ${r.status} ${wasmUrl}`);
+        return r.arrayBuffer();
+      });
+      await initWasm(wasmBytes);
+
+      const bridge = new TinymistLanguageServer({
+        sendEvent: (eventId: number): void => {
+          this.wasmEventQueue.push(eventId);
+        },
+        sendRequest: (req: { id: number; method: string; params?: unknown }): void => {
+          void this.handleWasmServerRequest(req);
+        },
+        sendNotification: (msg: { method: string; params?: unknown }): void => {
+          if (msg.method === "textDocument/publishDiagnostics") {
+            this.applyPublishDiagnostics(msg.params);
+          }
+        },
+        resolveFn: (spec: unknown): string | undefined => {
+          const s = spec as { namespace?: string; name?: string; version?: string };
+          if (
+            typeof s.namespace === "string" &&
+            typeof s.name === "string" &&
+            typeof s.version === "string"
+          ) {
+            return wasmResolvePackage({
+              namespace: s.namespace,
+              name: s.name,
+              version: s.version,
+            });
+          }
+          return undefined;
+        },
+      }) as WasmTinymistBridge;
+
+      this.wasmBridge = bridge;
+
+      const init = (await this.wasmRequest("initialize", this.buildInitializeParams(model))) as InitResult;
+      this.initResult = init;
+      console.info("TinyMist initialized (WASM)", init.capabilities ?? {});
+      this.wasmNotify("initialized", {});
+      this.registerProviders();
+    } catch (err) {
+      this.initPromise = undefined;
+      this.wasmBridge?.free();
+      this.wasmBridge = undefined;
+      this.wasmEventQueue = [];
+      throw err instanceof Error ? err : new Error(String(err));
+    }
+  }
+
+  private connectWebSocket(model: monaco.editor.ITextModel): Promise<void> {
     const url = getTinymistWsUrl();
-    this.initPromise = new Promise<void>((resolve, reject) => {
+    return new Promise<void>((resolve, reject) => {
       const ws = new WebSocket(url);
       this.socket = ws;
       ws.onmessage = (ev) => this.handleMessage(ev.data);
@@ -371,42 +548,7 @@ class TinyMistLspSession {
       };
       ws.onopen = async () => {
         try {
-          const rootUri =
-            model.uri.scheme === "file"
-              ? monaco.Uri.file(model.uri.path.split("/").slice(0, -1).join("/") || "/").toString()
-              : null;
-          const init = (await this.request("initialize", {
-            processId: null,
-            clientInfo: { name: "typst-editor", version: "0.1.0" },
-            locale: "en",
-            rootUri,
-            capabilities: {
-              textDocument: {
-                hover: { contentFormat: ["markdown", "plaintext"] },
-                definition: { linkSupport: true },
-                references: {},
-                documentSymbol: { hierarchicalDocumentSymbolSupport: true },
-                foldingRange: {},
-                rename: {},
-                publishDiagnostics: { relatedInformation: true },
-                semanticTokens: {
-                  requests: { full: true },
-                  tokenTypes: LSP_SEMANTIC_TOKEN_TYPES,
-                  tokenModifiers: LSP_SEMANTIC_TOKEN_MODIFIERS,
-                  formats: ["relative"],
-                },
-                inlayHint: {},
-                codeAction: { codeActionLiteralSupport: { codeActionKind: { valueSet: [""] } } },
-                documentLink: {},
-                colorProvider: {},
-                codeLens: {},
-                signatureHelp: {},
-                formatting: {},
-              },
-              workspace: { symbol: {} },
-            },
-            initializationOptions: {},
-          })) as InitResult;
+          const init = (await this.request("initialize", this.buildInitializeParams(model))) as InitResult;
           this.initResult = init;
           console.info("TinyMist initialized", init.capabilities ?? {});
           this.notify("initialized", {});
@@ -417,7 +559,122 @@ class TinyMistLspSession {
         }
       };
     });
-    return this.initPromise;
+  }
+
+  private flushWasmEvents(): void {
+    const b = this.wasmBridge;
+    if (!b) return;
+    while (this.wasmEventQueue.length > 0) {
+      const batch = this.wasmEventQueue.splice(0);
+      for (const eventId of batch) {
+        b.on_event(eventId);
+      }
+    }
+  }
+
+  private async wasmRequest(method: string, params?: unknown): Promise<unknown> {
+    const b = this.wasmBridge;
+    if (!b) throw new Error("TinyMist WASM bridge not ready");
+    const raw = b.on_request(method, params);
+    const settled = await Promise.resolve(raw);
+    this.flushWasmEvents();
+    if (isLikelyWasmLspError(settled)) {
+      throw new Error(settled.message);
+    }
+    return settled;
+  }
+
+  private wasmNotify(method: string, params?: unknown): void {
+    const b = this.wasmBridge;
+    if (!b) return;
+    b.on_notification(method, params);
+    this.flushWasmEvents();
+  }
+
+  private async handleWasmServerRequest(req: { id: number; method: string; params?: unknown }): Promise<void> {
+    const b = this.wasmBridge;
+    if (!b) return;
+    const { id, method, params } = req;
+    try {
+      if (method === "client/registerCapability" || method === "client/unregisterCapability") {
+        b.on_response({ id, result: null });
+      } else if (method === "workspace/configuration") {
+        const items =
+          (params as { items?: { section?: string | null }[] } | undefined)?.items ?? [];
+        b.on_response({ id, result: items.map(() => ({})) });
+      } else if (method === "window/workDoneProgress/create") {
+        b.on_response({ id, result: null });
+      } else if (method === "tinymist/fs/watch") {
+        b.on_response({ id, result: null });
+        void this.onTinymistFsWatch(params);
+        this.flushWasmEvents();
+      } else {
+        b.on_response({
+          id,
+          error: { code: -32601, message: `Unhandled server request: ${method}` },
+        });
+      }
+    } catch (e) {
+      b.on_response({
+        id,
+        error: { code: -32603, message: String(e) },
+      });
+    }
+    this.flushWasmEvents();
+  }
+
+  /** TinyMist WASM uses `WatchAccessModel`: server asks us to read files, then we push bytes via `tinymist/fsChange`. */
+  private async onTinymistFsWatch(params: unknown): Promise<void> {
+    const p = params as { inserts?: string[]; removes?: string[] };
+    const inserts = Array.isArray(p?.inserts) ? p.inserts : [];
+    const removes = Array.isArray(p?.removes) ? p.removes : [];
+    const fileChanges = await Promise.all(
+      inserts.map(async (uri) => ({
+        uri,
+        content: await readUriForTinymist(uri),
+      })),
+    );
+    try {
+      await this.request("tinymist/fsChange", { inserts: fileChanges, removes, isSync: true });
+    } catch (e) {
+      console.error("[tinymist-lsp] tinymist/fsChange failed", e);
+    }
+  }
+
+  private applyPublishDiagnostics(params: unknown): void {
+    const p = (params ?? {}) as {
+      uri: string;
+      diagnostics: {
+        range: LspRange;
+        severity?: number;
+        message: string;
+        source?: string;
+        code?: string | number;
+      }[];
+    };
+    const model = monaco.editor.getModel(monaco.Uri.parse(p.uri));
+    if (!model) return;
+    monaco.editor.setModelMarkers(
+      model,
+      "tinymist",
+      (p.diagnostics ?? []).map((d) => ({
+        severity:
+          d.severity === 1
+            ? monaco.MarkerSeverity.Error
+            : d.severity === 2
+              ? monaco.MarkerSeverity.Warning
+              : d.severity === 3
+                ? monaco.MarkerSeverity.Info
+                : monaco.MarkerSeverity.Hint,
+        message: d.message,
+        source: d.source || "tinymist",
+        code: d.code == null ? undefined : String(d.code),
+        startLineNumber: d.range.start.line + 1,
+        startColumn: d.range.start.character + 1,
+        endLineNumber: d.range.end.line + 1,
+        endColumn: d.range.end.character + 1,
+      })),
+    );
   }
 
   async openModel(model: monaco.editor.ITextModel): Promise<void> {
@@ -475,17 +732,34 @@ class TinyMistLspSession {
   }
 
   async shutdown(): Promise<void> {
-    if (!this.socket) return;
-    try {
-      await this.request("shutdown", {});
-      this.notify("exit", {});
-    } catch {
-      // ignore shutdown transport errors
+    if (this.wasmBridge) {
+      try {
+        await this.wasmRequest("shutdown", {});
+      } catch {
+        // ignore
+      }
+      try {
+        this.wasmNotify("exit", {});
+      } catch {
+        // ignore
+      }
+      this.wasmBridge.free();
+      this.wasmBridge = undefined;
+      this.wasmEventQueue = [];
+    } else if (this.socket) {
+      try {
+        await this.request("shutdown", {});
+        this.notify("exit", {});
+      } catch {
+        // ignore shutdown transport errors
+      }
+      this.socket.close();
+      this.socket = undefined;
+    } else {
+      return;
     }
     this.providerDisposables.forEach((d) => d.dispose());
     this.providerDisposables = [];
-    this.socket.close();
-    this.socket = undefined;
     this.initPromise = undefined;
     this.initResult = undefined;
     this.openDocs.clear();
@@ -567,47 +841,49 @@ class TinyMistLspSession {
               count: lspItems.length,
               incomplete: Array.isArray(resp) ? false : !!resp?.isIncomplete,
             });
-            const suggestions: monaco.languages.CompletionItem[] = lspItems
-              .map((raw) => {
-                const i = raw as {
-                  label: string;
-                  kind?: number;
-                  detail?: string;
-                  documentation?: string | { value?: string };
-                  insertText?: string;
-                  filterText?: string;
-                  sortText?: string;
-                  insertTextFormat?: number;
-                  textEdit?: { range: LspRange; newText: string };
-                };
-                const doc =
-                  typeof i.documentation === "string"
-                    ? i.documentation
-                    : (i.documentation?.value ?? undefined);
-                const range = i.textEdit?.range
-                  ? toMonacoRange(i.textEdit.range)
-                  : new monaco.Range(
-                      position.lineNumber,
-                      position.column,
-                      position.lineNumber,
-                      position.column,
-                    );
-                return {
-                  label: i.label,
-                  kind: mapCompletionItemKind(i.kind),
-                  detail: i.detail,
-                  documentation: doc ? { value: doc } : undefined,
-                  insertText: i.textEdit?.newText ?? i.insertText ?? i.label,
-                  filterText: i.filterText,
-                  sortText: i.sortText,
-                  range,
-                  insertTextRules:
-                    i.insertTextFormat === 2
-                      ? monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet
-                      : monaco.languages.CompletionItemInsertTextRule.None,
-                } as monaco.languages.CompletionItem;
-              })
-              .filter((x) => !!x.label);
+            const suggestions: monaco.languages.CompletionItem[] = lspItems.flatMap((raw) => {
+              const i = raw as Record<string, unknown>;
+              const label = lspCompletionItemDisplayLabel(i);
+              const kind = typeof i.kind === "number" ? i.kind : undefined;
+              const detail = typeof i.detail === "string" ? i.detail : undefined;
+              const docRaw = i.documentation;
+              const doc =
+                typeof docRaw === "string"
+                  ? docRaw
+                  : docRaw && typeof docRaw === "object" && docRaw !== null && "value" in docRaw
+                    ? String((docRaw as { value?: unknown }).value ?? "")
+                    : undefined;
+              const textEdit = i.textEdit as { range: LspRange; newText: string } | undefined;
+              const insertText = typeof i.insertText === "string" ? i.insertText : undefined;
+              const filterText = typeof i.filterText === "string" ? i.filterText : undefined;
+              const sortText = typeof i.sortText === "string" ? i.sortText : undefined;
+              const insertTextFormat = typeof i.insertTextFormat === "number" ? i.insertTextFormat : undefined;
+              const insertResolved = textEdit?.newText ?? insertText ?? label;
+              if (!label && !insertResolved) return [];
+              const range = textEdit?.range
+                ? toMonacoRange(textEdit.range)
+                : new monaco.Range(
+                    position.lineNumber,
+                    position.column,
+                    position.lineNumber,
+                    position.column,
+                  );
+              const item: monaco.languages.CompletionItem = {
+                label: label || insertResolved,
+                kind: mapCompletionItemKind(kind),
+                detail,
+                documentation: doc ? { value: doc } : undefined,
+                insertText: insertResolved,
+                filterText,
+                sortText,
+                range,
+                insertTextRules:
+                  insertTextFormat === 2
+                    ? monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet
+                    : monaco.languages.CompletionItemInsertTextRule.None,
+              };
+              return [item];
+            });
 
             return {
               suggestions,
@@ -1033,39 +1309,7 @@ class TinyMistLspSession {
       return;
     }
     if (msg.method === "textDocument/publishDiagnostics") {
-      const params = (msg.params ?? {}) as {
-        uri: string;
-        diagnostics: {
-          range: LspRange;
-          severity?: number;
-          message: string;
-          source?: string;
-          code?: string | number;
-        }[];
-      };
-      const model = monaco.editor.getModel(monaco.Uri.parse(params.uri));
-      if (!model) return;
-      monaco.editor.setModelMarkers(
-        model,
-        "tinymist",
-        (params.diagnostics ?? []).map((d) => ({
-          severity:
-            d.severity === 1
-              ? monaco.MarkerSeverity.Error
-              : d.severity === 2
-                ? monaco.MarkerSeverity.Warning
-                : d.severity === 3
-                  ? monaco.MarkerSeverity.Info
-                  : monaco.MarkerSeverity.Hint,
-          message: d.message,
-          source: d.source || "tinymist",
-          code: d.code == null ? undefined : String(d.code),
-          startLineNumber: d.range.start.line + 1,
-          startColumn: d.range.start.character + 1,
-          endLineNumber: d.range.end.line + 1,
-          endColumn: d.range.end.character + 1,
-        })),
-      );
+      this.applyPublishDiagnostics(msg.params);
     }
   }
 
@@ -1105,6 +1349,9 @@ class TinyMistLspSession {
   }
 
   private request(method: string, params?: unknown): Promise<unknown> {
+    if (this.wasmBridge) {
+      return this.wasmRequest(method, params);
+    }
     const id = this.idSeq++;
     const payload: JsonRpcRequest = { jsonrpc: "2.0", id, method, params };
     return new Promise((resolve, reject) => {
@@ -1114,6 +1361,10 @@ class TinyMistLspSession {
   }
 
   private notify(method: string, params?: unknown): void {
+    if (this.wasmBridge) {
+      this.wasmNotify(method, params);
+      return;
+    }
     const payload: JsonRpcNotification = { jsonrpc: "2.0", method, params };
     this.send(payload);
   }

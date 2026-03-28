@@ -33,9 +33,6 @@
     "active": true,
     "category": "DeveloperTool",
     "targets": "all",
-    "externalBin": [
-      "binaries/tinymist"
-    ],
     "resources": [
       "resources/fonts/bundled"
     ],

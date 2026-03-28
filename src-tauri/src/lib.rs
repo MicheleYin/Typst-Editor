@@ -11,29 +11,29 @@ use tauri::path::BaseDirectory;
 #[cfg(desktop)]
 use tauri::Emitter;
 use tauri::Manager;
-#[cfg(desktop)]
+#[cfg(all(desktop, any(target_os = "windows", target_os = "linux")))]
 use std::process::Stdio;
 // Native app menus are desktop-only in Tauri (`cfg(desktop)`). iOS/iPadOS builds omit
 // `set_menu` / `on_menu_event`; use web shortcuts + in-app UI on iPad for the same actions.
 #[cfg(desktop)]
 use std::sync::OnceLock;
-#[cfg(desktop)]
+#[cfg(all(desktop, any(target_os = "windows", target_os = "linux")))]
 use futures_util::{SinkExt, StreamExt};
 #[cfg(desktop)]
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
 #[cfg(desktop)]
 use tauri::Wry;
-#[cfg(desktop)]
+#[cfg(all(desktop, any(target_os = "windows", target_os = "linux")))]
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-#[cfg(desktop)]
+#[cfg(all(desktop, any(target_os = "windows", target_os = "linux")))]
 use tokio::net::TcpListener;
-#[cfg(desktop)]
+#[cfg(all(desktop, any(target_os = "windows", target_os = "linux")))]
 use tokio::process::Command as TokioCommand;
-#[cfg(desktop)]
+#[cfg(all(desktop, any(target_os = "windows", target_os = "linux")))]
 use tokio::sync::{broadcast, Mutex};
-#[cfg(desktop)]
+#[cfg(all(desktop, any(target_os = "windows", target_os = "linux")))]
 use tokio_tungstenite::accept_async;
-#[cfg(desktop)]
+#[cfg(all(desktop, any(target_os = "windows", target_os = "linux")))]
 use tokio_tungstenite::tungstenite::Message;
 
 /// Handle for **File → Export…** so the web layer can enable/disable it when the active tab changes.
@@ -52,12 +52,12 @@ struct WorkspaceDependentMenuItems {
 #[cfg(desktop)]
 static WORKSPACE_DEPENDENT_MENU_ITEMS: OnceLock<WorkspaceDependentMenuItems> = OnceLock::new();
 
-#[cfg(desktop)]
+#[cfg(all(desktop, any(target_os = "windows", target_os = "linux")))]
 const TINYMIST_WS_ADDR: &str = "127.0.0.1:7676";
-#[cfg(desktop)]
+#[cfg(all(desktop, any(target_os = "windows", target_os = "linux")))]
 static TINYMIST_BRIDGE_STARTED: OnceLock<()> = OnceLock::new();
 
-#[cfg(desktop)]
+#[cfg(all(desktop, any(target_os = "windows", target_os = "linux")))]
 fn tinymist_sidecar_candidates(app: &tauri::AppHandle) -> Vec<PathBuf> {
     let mut out = Vec::new();
     let ext = if cfg!(target_os = "windows") { ".exe" } else { "" };
@@ -104,7 +104,7 @@ fn tinymist_sidecar_candidates(app: &tauri::AppHandle) -> Vec<PathBuf> {
     out
 }
 
-#[cfg(desktop)]
+#[cfg(all(desktop, any(target_os = "windows", target_os = "linux")))]
 fn resolve_tinymist_binary(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     tinymist_sidecar_candidates(app)
         .into_iter()
@@ -114,7 +114,7 @@ fn resolve_tinymist_binary(app: &tauri::AppHandle) -> Result<PathBuf, String> {
         })
 }
 
-#[cfg(desktop)]
+#[cfg(all(desktop, any(target_os = "windows", target_os = "linux")))]
 fn try_decode_lsp_message(buf: &[u8]) -> Option<(usize, String)> {
     let sep = b"\r\n\r\n";
     let head_end = buf.windows(sep.len()).position(|w| w == sep)?;
@@ -137,7 +137,7 @@ fn try_decode_lsp_message(buf: &[u8]) -> Option<(usize, String)> {
     Some((body_end, text))
 }
 
-#[cfg(desktop)]
+#[cfg(all(desktop, any(target_os = "windows", target_os = "linux")))]
 fn start_tinymist_sidecar_bridge(app: &tauri::AppHandle) -> Result<(), String> {
     if TINYMIST_BRIDGE_STARTED.get().is_some() {
         return Ok(());
@@ -2937,7 +2937,8 @@ pub fn run() {
     let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_fs::init());
+        .plugin(tauri_plugin_fs::init())
+        .plugin(tauri_plugin_os::init());
 
     #[cfg(desktop)]
     {
@@ -2952,9 +2953,12 @@ pub fn run() {
             }
             #[cfg(desktop)]
             {
-            if let Err(e) = start_tinymist_sidecar_bridge(&handle) {
-                eprintln!("typst-editor: TinyMist bridge unavailable: {e}");
-            }
+                #[cfg(all(desktop, any(target_os = "windows", target_os = "linux")))]
+                {
+                    if let Err(e) = start_tinymist_sidecar_bridge(&handle) {
+                        eprintln!("typst-editor: TinyMist bridge unavailable: {e}");
+                    }
+                }
             let app_menu_title = handle.package_info().name.clone();
 
             // File Menu (project-based app)

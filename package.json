@@ -15,21 +15,25 @@
     "build:ios:appstore": "node scripts/tauri-cli.cjs ios build --export-method app-store-connect",
     "ios:init": "node scripts/tauri-cli.cjs ios init --ci",
     "ios:open": "node scripts/tauri-cli.cjs ios build -- --open",
-    "fonts:download": "node scripts/download-bundled-fonts.mjs"
+    "fonts:download": "node scripts/download-bundled-fonts.mjs",
+    "tauri:build:win-linux-lsp": "node scripts/tauri-cli.cjs build -c src-tauri/tauri.sidecar-lsp.json"
   },
   "dependencies": {
     "@embedpdf/svelte-pdf-viewer": "^2.9.1",
     "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-os": "^2",
     "@tauri-apps/plugin-dialog": "^2.6.0",
     "@tauri-apps/plugin-fs": "^2.4.5",
     "@tauri-apps/plugin-opener": "^2",
     "@tauri-apps/plugin-window-state": "^2",
+    "fflate": "^0.8.2",
     "dompurify": "^3.3.3",
     "jsonc-parser": "^3.3.1",
     "lucide-svelte": "^0.577.0",
     "marked": "^17.0.4",
     "monaco-editor": "^0.55.1",
     "svelte": "^5.53.12",
+    "tinymist-web": "file:../tinymist/crates/tinymist",
     "typst": "^0.10.0-8"
   },
   "devDependencies": {

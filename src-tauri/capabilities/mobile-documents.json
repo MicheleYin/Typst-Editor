@@ -6,6 +6,7 @@
   "platforms": ["iOS", "android"],
   "permissions": [
     "core:default",
+    "os:allow-platform",
     "dialog:default",
     "fs:allow-document-read-recursive",
     "fs:allow-document-write-recursive",
