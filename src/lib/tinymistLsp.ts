@@ -475,21 +475,22 @@ class TinyMistLspSession {
 
   private async connectWasm(model: monaco.editor.ITextModel): Promise<void> {
     try {
-      const [tinymistMod, wasmMod] = await Promise.all([
+      // Do not use `import("...wasm?url")`: WebKit treats that graph edge like a JS module
+      // and throws TypeError: 'application/wasm' is not a valid JavaScript MIME type.
+      const wasmUrl = new URL(
+        "../../node_modules/tinymist-web/pkg/tinymist_bg.wasm",
+        import.meta.url,
+      ).href;
+      const [tinymistMod, wasmBytes] = await Promise.all([
         import("tinymist-web"),
-        import("tinymist-web/pkg/tinymist_bg.wasm?url"),
+        fetch(wasmUrl).then((r) => {
+          if (!r.ok) throw new Error(`TinyMist WASM fetch failed: ${r.status} ${wasmUrl}`);
+          return r.arrayBuffer();
+        }),
       ]);
-      const initWasm = tinymistMod.default;
-      const { TinymistLanguageServer } = tinymistMod;
-      const wasmUrl = (wasmMod as { default: string }).default;
-      // WKWebView / Tauri asset protocol: `instantiateStreaming` can fail with
-      // TypeError: 'application/wasm' is not a valid JavaScript MIME type.
-      // Passing an ArrayBuffer skips streaming and uses `WebAssembly.instantiate`.
-      const wasmBytes = await fetch(wasmUrl).then((r) => {
-        if (!r.ok) throw new Error(`TinyMist WASM fetch failed: ${r.status} ${wasmUrl}`);
-        return r.arrayBuffer();
-      });
-      await initWasm(wasmBytes);
+      const { initSync, TinymistLanguageServer } = tinymistMod;
+      // `initSync` uses WebAssembly.Module/Instance only — no instantiateStreaming.
+      initSync({ module: wasmBytes });
 
       const bridge = new TinymistLanguageServer({
         sendEvent: (eventId: number): void => {
