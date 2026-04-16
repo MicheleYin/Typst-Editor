@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, untrack } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
   import * as monaco from "monaco-editor";
   import { listen } from "@tauri-apps/api/event";
@@ -127,6 +127,7 @@
   } from "./lib/appCommands";
   import { runTypstExportFromModal } from "./lib/appTypstExport";
   import { isIpadOs } from "./lib/ipadOs";
+  import { TinymistLspSession, pathToFileUri } from "./lib/tinymistLsp";
   import pkg from "../package.json";
 
   let appName = $state(pkg.name);
@@ -477,6 +478,8 @@
   let splitRatio = $state(readStoredSplitRatio());
   let isResizing = $state(false);
   let editor = $state<monaco.editor.IStandaloneCodeEditor | undefined>(undefined);
+  /** In-process tinymist LSP session (Tauri); null when no Typst doc or no project root. */
+  let tinymistLsp = $state<TinymistLspSession | null>(null);
   /**
    * Tauri `listen("menu-event")` runs in a closure that can read stale `$state` for `editor`.
    * Keep a plain object ref updated from onReady so Edit → Select All always sees the instance.
@@ -1442,6 +1445,38 @@
     return () => clearTimeout(timeoutId);
   });
 
+  /** Tinymist LSP: project root + Typst tab + Monaco; re-inits when project/path/editor changes, not on every keystroke. */
+  $effect(() => {
+    const root = currentFolder ?? iosProjectPath;
+    const ed = editor;
+    const path = currentFilePath;
+    if (!root || !ed || !path || !isTypstPath(path) || isCurrentBinary) {
+      tinymistLsp?.dispose();
+      tinymistLsp = null;
+      return;
+    }
+    const initialText = untrack(() => content);
+    const session = new TinymistLspSession();
+    let cancelled = false;
+    void session.init(root, ed, path, initialText).then(() => {
+      if (!cancelled) tinymistLsp = session;
+    });
+    return () => {
+      cancelled = true;
+      session.dispose();
+      tinymistLsp = null;
+    };
+  });
+
+  $effect(() => {
+    const text = content;
+    const s = tinymistLsp;
+    const path = currentFilePath;
+    if (!s || !path || !isTypstPath(path)) return;
+    const tid = setTimeout(() => void s.onDidChangeText(path, text), 200);
+    return () => clearTimeout(tid);
+  });
+
   function handleEditorSplitResize(clientX: number) {
     if (!isResizing || !editorPreviewRegion) return;
     const r = editorSplitRatioFromPointer(clientX, editorPreviewRegion.getBoundingClientRect());
@@ -1913,6 +1948,8 @@
       editorLanguageId={editorLanguageId}
       readOnly={isCurrentBinary}
       monacoThemeResolved={monacoThemeResolved}
+      documentFileUri={currentFilePath && !isCurrentBinary ? pathToFileUri(currentFilePath) : null}
+      editorDocumentKey={currentFilePath}
       onContentChange={onEditorContentChange}
       onMonacoReady={(ed) => {
         editor = ed;

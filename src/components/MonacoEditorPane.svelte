@@ -19,6 +19,8 @@
     languageId = "typst",
     readOnly = false,
     monacoTheme,
+    /** When set, the model uses this URI so it matches tinymist LSP `textDocument` URIs. */
+    documentFileUri = null,
     onContentChange,
     onReady,
     onDispose,
@@ -27,6 +29,7 @@
     languageId?: string;
     readOnly?: boolean;
     monacoTheme: string;
+    documentFileUri?: string | null;
     onContentChange: (value: string) => void;
     onReady: (editor: monaco.editor.IStandaloneCodeEditor) => void;
     onDispose?: () => void;
@@ -61,9 +64,16 @@
       monaco.editor.defineTheme(MONACO_THEME_ID_LIGHT, MONACO_CAT_LIGHT);
       monaco.editor.defineTheme(MONACO_THEME_ID_DARK, MONACO_CAT_DARK);
 
+      const model =
+        documentFileUri != null && documentFileUri.length > 0
+          ? monaco.editor.createModel(
+              initialValue,
+              languageId,
+              monaco.Uri.parse(documentFileUri),
+            )
+          : monaco.editor.createModel(initialValue, languageId);
       ed = monaco.editor.create(host, {
-        value: initialValue,
-        language: languageId,
+        model,
         theme: monacoTheme,
         readOnly,
         minimap: { enabled: false },

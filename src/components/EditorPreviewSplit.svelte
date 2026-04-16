@@ -36,6 +36,9 @@
     editorLanguageId,
     readOnly,
     monacoThemeResolved,
+    documentFileUri = null,
+    /** Remount Monaco when the open document changes so the model URI stays in sync. */
+    editorDocumentKey = null,
     onContentChange,
     onMonacoReady,
     onMonacoDispose,
@@ -64,6 +67,8 @@
     editorLanguageId: string;
     readOnly: boolean;
     monacoThemeResolved: string;
+    documentFileUri?: string | null;
+    editorDocumentKey?: string | null;
     onContentChange: (v: string) => void;
     onMonacoReady: (ed: monaco.editor.IStandaloneCodeEditor) => void;
     onMonacoDispose: () => void;
@@ -102,15 +107,18 @@
     >
       <EditorQuickActions {editor} {typstFontFaces} {showTypstToolbar} />
       <div class="relative flex-1 min-h-0 min-w-0 flex flex-col">
-        <MonacoEditorPane
-          initialValue={content}
-          languageId={editorLanguageId}
-          {readOnly}
-          monacoTheme={monacoThemeResolved}
-          onContentChange={onContentChange}
-          onReady={onMonacoReady}
-          onDispose={onMonacoDispose}
-        />
+        {#key editorDocumentKey ?? ""}
+          <MonacoEditorPane
+            initialValue={content}
+            languageId={editorLanguageId}
+            {readOnly}
+            monacoTheme={monacoThemeResolved}
+            documentFileUri={documentFileUri}
+            onContentChange={onContentChange}
+            onReady={onMonacoReady}
+            onDispose={onMonacoDispose}
+          />
+        {/key}
       </div>
     </div>
 

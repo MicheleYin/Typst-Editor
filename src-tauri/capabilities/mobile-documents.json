@@ -48,6 +48,8 @@
         "$DOCUMENT/**",
         "$DOCUMENT/Projects/*/.typst-editor-project.json"
       ]
-    }
+    },
+    "core:event:allow-listen",
+    "core:event:allow-emit"
   ]
 }

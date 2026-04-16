@@ -1,3 +1,5 @@
+mod tinymist_bridge;
+
 use std::fs;
 use std::io::copy;
 use std::io::Cursor;
@@ -2725,6 +2727,9 @@ pub fn run() {
             if let Err(e) = migrate_font_config_to_local_storage(&handle) {
                 eprintln!("typst-editor: font config migration: {e}");
             }
+            tinymist_bridge::spawn_tinymist_lsp(handle.clone()).unwrap_or_else(|e| {
+                eprintln!("typst-editor: tinymist LSP failed to start: {e}");
+            });
             #[cfg(desktop)]
             {
             let app_menu_title = handle.package_info().name.clone();
@@ -2876,6 +2881,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            tinymist_bridge::tinymist_lsp_send,
             app_has_native_menu,
             app_file_ui_mode,
             workspace_projects_use_document_dir,
