@@ -8,7 +8,14 @@
     AlertTriangle,
     Copy,
     Check,
+    ScrollText,
+    Square,
   } from "lucide-svelte";
+  import {
+    readTypstPreviewLayout,
+    persistTypstPreviewLayout,
+    type TypstPreviewLayout,
+  } from "../lib/typstPreviewLayout";
 
   type CompileDiagnostic = {
     severity?: "error" | "warning";
@@ -171,6 +178,17 @@
   let contentEl = $state<HTMLElement | null>(null);
   let viewportEl = $state<HTMLElement | null>(null);
 
+  let layout = $state<TypstPreviewLayout>(readTypstPreviewLayout());
+
+  function togglePreviewLayout() {
+    layout = layout === "paginated" ? "scroll" : "paginated";
+    persistTypstPreviewLayout(layout);
+    if (layout === "scroll") {
+      translateX = 0;
+      translateY = 0;
+    }
+  }
+
   /** Zoom toward a point in viewport coordinates (pane center, pinch center, etc.). */
   function setScaleAtFocalPoint(
     nextScale: number,
@@ -265,7 +283,7 @@
         });
       }
       e.preventDefault();
-    } else if (e.touches.length === 1) {
+    } else if (e.touches.length === 1 && layout === "paginated") {
       const p = e.touches[0];
       touchPanning = true;
       touchPanId = p.identifier;
@@ -354,7 +372,7 @@
       });
     }
     if (e.touches.length < 2) pinchActive = false;
-    if (e.touches.length === 1 && pages[currentPage]) {
+    if (e.touches.length === 1 && pages[currentPage] && layout === "paginated") {
       const p = e.touches[0];
       touchPanning = true;
       touchPanId = p.identifier;
@@ -407,7 +425,7 @@
   }
 
   function startPan(e: MouseEvent) {
-    if (!pages[currentPage] || e.button !== 0) return;
+    if (layout === "scroll" || !pages[currentPage] || e.button !== 0) return;
     const t = e.target as HTMLElement | null;
     if (t?.closest("button")) return;
     isPanning = true;
@@ -659,9 +677,11 @@
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div
     class="flex-1 min-h-0 min-w-0 overflow-hidden relative {pages[currentPage]
-      ? isPanning
-        ? 'cursor-grabbing'
-        : 'cursor-grab'
+      ? layout === 'paginated'
+        ? isPanning
+          ? 'cursor-grabbing'
+          : 'cursor-grab'
+        : 'cursor-default'
       : 'cursor-default'}"
   >
     {#if pageCount > 0 && pages[currentPage]}
@@ -671,32 +691,49 @@
         <div
           class="flex w-fit items-center gap-0.5 rounded-md shadow-lg border border-[var(--app-border)] bg-[var(--app-surface-elevated)] p-0.5"
         >
-          <button
-            type="button"
-            onclick={prevPage}
-            disabled={currentPage === 0}
-            class="inline-flex shrink-0 items-center justify-center rounded p-1 text-[var(--app-fg-secondary)] hover:bg-[var(--app-btn-ghost-hover)] disabled:opacity-30 disabled:hover:bg-transparent transition-colors"
-            title="Previous Page"
-          >
-            <ChevronLeft size={15} />
-          </button>
+          {#if layout === "paginated"}
+            <button
+              type="button"
+              onclick={prevPage}
+              disabled={currentPage === 0}
+              class="inline-flex shrink-0 items-center justify-center rounded p-1 text-[var(--app-fg-secondary)] hover:bg-[var(--app-btn-ghost-hover)] disabled:opacity-30 disabled:hover:bg-transparent transition-colors"
+              title="Previous Page"
+            >
+              <ChevronLeft size={15} />
+            </button>
+          {/if}
           <div
             class="px-1.5 text-[11px] font-bold tabular-nums text-[var(--app-fg-secondary)]"
           >
             {pageCount > 0 ? currentPage + 1 : 0} / {pageCount}
           </div>
-          <button
-            type="button"
-            onclick={nextPage}
-            disabled={currentPage >= pageCount - 1}
-            class="inline-flex shrink-0 items-center justify-center rounded p-1 text-[var(--app-fg-secondary)] hover:bg-[var(--app-btn-ghost-hover)] disabled:opacity-30 disabled:hover:bg-transparent transition-colors"
-            title="Next Page"
-          >
-            <ChevronRight size={15} />
-          </button>
+          {#if layout === "paginated"}
+            <button
+              type="button"
+              onclick={nextPage}
+              disabled={currentPage >= pageCount - 1}
+              class="inline-flex shrink-0 items-center justify-center rounded p-1 text-[var(--app-fg-secondary)] hover:bg-[var(--app-btn-ghost-hover)] disabled:opacity-30 disabled:hover:bg-transparent transition-colors"
+              title="Next Page"
+            >
+              <ChevronRight size={15} />
+            </button>
+          {/if}
         </div>
 
         <div class="flex w-fit flex-col gap-1">
+          <button
+            type="button"
+            onclick={togglePreviewLayout}
+            class="inline-flex size-7 shrink-0 items-center justify-center rounded-md shadow-md border border-[var(--app-border)] bg-[var(--app-surface-elevated)] text-[var(--app-fg-secondary)] hover:bg-[var(--app-btn-ghost-hover)]"
+            title={layout === "scroll" ? "Single page" : "Continuous scroll"}
+            aria-pressed={layout === "scroll"}
+          >
+            {#if layout === "scroll"}
+              <ScrollText size={14} />
+            {:else}
+              <Square size={14} />
+            {/if}
+          </button>
           <button
             type="button"
             onclick={previewZoomIn}
@@ -724,27 +761,54 @@
         </div>
       </div>
 
-      <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-      <div
-        bind:this={viewportEl}
-        class="absolute inset-0 flex items-center justify-center overflow-hidden p-3 sm:p-4"
-        style:touch-action="none"
-        use:previewGestures
-        onmousedown={startPan}
-        role="application"
-        aria-label="Pinch or Ctrl+scroll to zoom; drag to pan"
-        tabindex="-1"
-      >
+      {#if layout === "scroll"}
+        <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
         <div
-          bind:this={contentEl}
-          style:transform="translate3d({translateX}px, {translateY}px, 0) scale({scale})"
-          class="flex h-full w-full origin-center items-center justify-center will-change-transform transition-none select-none [backface-visibility:hidden]"
+          class="absolute inset-0 overflow-y-auto overflow-x-hidden p-3 sm:p-4"
+          style:touch-action="pan-y pinch-zoom"
+          use:previewGestures
+          role="application"
+          aria-label="Scroll through pages; Ctrl+scroll or pinch to zoom"
+          tabindex="-1"
         >
-          <div class="typst-preview-graphic max-h-full max-w-full drop-shadow-md">
-            {@html pages[currentPage]}
+          <div
+            bind:this={contentEl}
+            style:transform="scale({scale})"
+            style:transform-origin="top center"
+            class="mx-auto flex w-full max-w-full flex-col items-center gap-6 pb-8 will-change-transform select-none"
+          >
+            {#each pages as page, i (i)}
+              <div
+                class="typst-preview-graphic typst-preview-graphic--scroll w-full max-w-full shrink-0 drop-shadow-md"
+              >
+                {@html page}
+              </div>
+            {/each}
           </div>
         </div>
-      </div>
+      {:else}
+        <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+        <div
+          bind:this={viewportEl}
+          class="absolute inset-0 flex items-center justify-center overflow-hidden p-3 sm:p-4"
+          style:touch-action="none"
+          use:previewGestures
+          onmousedown={startPan}
+          role="application"
+          aria-label="Pinch or Ctrl+scroll to zoom; drag to pan"
+          tabindex="-1"
+        >
+          <div
+            bind:this={contentEl}
+            style:transform="translate3d({translateX}px, {translateY}px, 0) scale({scale})"
+            class="flex h-full w-full origin-center items-center justify-center will-change-transform transition-none select-none [backface-visibility:hidden]"
+          >
+            <div class="typst-preview-graphic max-h-full max-w-full drop-shadow-md">
+              {@html pages[currentPage]}
+            </div>
+          </div>
+        </div>
+      {/if}
     {:else}
       <div
         class="absolute inset-0 flex items-center justify-center text-[var(--preview-empty)] text-sm p-8 text-center"
@@ -769,5 +833,10 @@
     max-height: 100%;
     width: auto;
     height: auto;
+  }
+
+  .typst-preview-graphic--scroll :global(svg) {
+    max-height: none;
+    margin-inline: auto;
   }
 </style>
