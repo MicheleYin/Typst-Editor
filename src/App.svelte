@@ -1460,6 +1460,9 @@
     let cancelled = false;
     void session.init(root, ed, path, initialText).then(() => {
       if (!cancelled) tinymistLsp = session;
+    }).catch((error: unknown) => {
+      if (!cancelled) console.warn("Tinymist LSP initialization failed:", error);
+      session.dispose();
     });
     return () => {
       cancelled = true;

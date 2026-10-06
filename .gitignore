@@ -45,3 +45,7 @@ src-tauri/signing/*
 AuthKey_*.p8
 # App Store Connect API keys (any folder)
 **/AuthKey_*.p8
+
+
+#Ignore vscode AI rules
+.github/instructions/codacy.instructions.md

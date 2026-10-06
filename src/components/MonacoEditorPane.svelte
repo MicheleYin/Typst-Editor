@@ -80,6 +80,8 @@
         fontSize: 14,
         wordWrap: "on",
         automaticLayout: true,
+        quickSuggestions: { other: true, comments: false, strings: false },
+        suggestOnTriggerCharacters: true,
       });
 
       if (cancelled) {
