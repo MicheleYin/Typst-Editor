@@ -18,29 +18,29 @@
     "fonts:download": "node scripts/download-bundled-fonts.mjs"
   },
   "dependencies": {
-    "@embedpdf/svelte-pdf-viewer": "^2.9.1",
-    "@tauri-apps/api": "^2",
-    "@tauri-apps/plugin-dialog": "^2.6.0",
-    "@tauri-apps/plugin-fs": "^2.4.5",
-    "@tauri-apps/plugin-opener": "^2",
-    "@tauri-apps/plugin-window-state": "^2",
-    "dompurify": "^3.3.3",
+    "@embedpdf/svelte-pdf-viewer": "^2.15.1",
+    "@tauri-apps/api": "^2.12.1",
+    "@tauri-apps/plugin-dialog": "^2.8.1",
+    "@tauri-apps/plugin-fs": "^2.6.0",
+    "@tauri-apps/plugin-opener": "^2.7.0",
+    "@tauri-apps/plugin-window-state": "^2.5.0",
+    "dompurify": "^3.4.16",
     "jsonc-parser": "^3.3.1",
     "lucide-svelte": "^0.577.0",
-    "marked": "^17.0.4",
+    "marked": "^17.0.6",
     "monaco-editor": "^0.55.1",
-    "svelte": "^5.53.12",
+    "svelte": "^5.57.2",
     "typst": "^0.10.0-8"
   },
   "devDependencies": {
-    "@sveltejs/vite-plugin-svelte": "^5.0.0",
-    "@tailwindcss/vite": "^4.2.1",
-    "@tauri-apps/cli": "^2",
-    "autoprefixer": "^10.4.27",
-    "postcss": "^8.5.8",
-    "tailwindcss": "^4.2.1",
+    "@sveltejs/vite-plugin-svelte": "^5.1.1",
+    "@tailwindcss/vite": "^4.3.3",
+    "@tauri-apps/cli": "^2.12.1",
+    "autoprefixer": "^10.6.1",
+    "postcss": "^8.5.29",
+    "tailwindcss": "^4.3.3",
     "typescript": "~5.8.3",
-    "unzipper": "^0.12.3",
-    "vite": "^7.0.4"
+    "unzipper": "^0.12.5",
+    "vite": "^7.3.7"
   }
 }
