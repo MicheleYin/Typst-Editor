@@ -1,21 +1,21 @@
 <script lang="ts">
+  import { tick } from "svelte";
   import {
     ChevronLeft,
     ChevronRight,
+    Hand,
+    ScrollText,
     ZoomIn,
     ZoomOut,
     RotateCcw,
     AlertTriangle,
     Copy,
     Check,
-    ScrollText,
-    Square,
   } from "lucide-svelte";
   import {
-    readTypstPreviewLayout,
-    persistTypstPreviewLayout,
-    type TypstPreviewLayout,
-  } from "../lib/typstPreviewLayout";
+    persistPreviewInteractionMode,
+    type PreviewInteractionMode,
+  } from "../lib/appLayoutStorage";
 
   type CompileDiagnostic = {
     severity?: "error" | "warning";
@@ -41,8 +41,7 @@
     warnings = [],
     stalePreview = false,
     scale = $bindable(1),
-    translateX = $bindable(0),
-    translateY = $bindable(0),
+    previewInteractionMode = $bindable<PreviewInteractionMode>("scroll"),
   } = $props<{
     error: string;
     pages: string[];
@@ -52,13 +51,9 @@
     warnings?: CompileDiagnostic[];
     stalePreview?: boolean;
     scale?: number;
-    translateX?: number;
-    translateY?: number;
+    previewInteractionMode?: PreviewInteractionMode;
   }>();
 
-  let isPanning = $state(false);
-  let startX = 0;
-  let startY = 0;
   let copiedBanner = $state(false);
   let copiedDiagnostics = $state(false);
   let copiedWarnings = $state(false);
@@ -157,17 +152,20 @@
   let pinchDistFiltered = 1;
   let pinchLastRawD = 1;
   let pinchMoveLogCounter = 0;
-  /** Pinch midpoint (viewport px) — two-finger pan + zoom toward fingers */
   let pinchMidX = 0;
   let pinchMidY = 0;
-
-  /** One-finger touch pan */
-  let touchPanning = $state(false);
+  let isPanning = $state(false);
+  let panStartX = 0;
+  let panStartY = 0;
+  let translateX = $state(0);
+  let translateY = $state(0);
+  let touchPanning = false;
   let touchPanId = -1;
   let panTouchStartX = 0;
   let panTouchStartY = 0;
   let panStartTX = 0;
   let panStartTY = 0;
+
   function touchDistance(t: TouchList): number {
     if (t.length < 2) return 0;
     const dx = t[0].clientX - t[1].clientX;
@@ -175,22 +173,60 @@
     return Math.hypot(dx, dy);
   }
 
+  function touchById(touches: TouchList, id: number): Touch | undefined {
+    for (let index = 0; index < touches.length; index++) {
+      if (touches[index].identifier === id) return touches[index];
+    }
+    return undefined;
+  }
+
   let contentEl = $state<HTMLElement | null>(null);
   let viewportEl = $state<HTMLElement | null>(null);
+  let pageFitWidth = $state(0);
+  let pageFitHeight = $state(0);
 
-  let layout = $state<TypstPreviewLayout>(readTypstPreviewLayout());
-
-  function togglePreviewLayout() {
-    layout = layout === "paginated" ? "scroll" : "paginated";
-    persistTypstPreviewLayout(layout);
-    if (layout === "scroll") {
-      translateX = 0;
-      translateY = 0;
+  function measurePageFit() {
+    if (!contentEl) return;
+    const width = contentEl.offsetWidth;
+    const height = contentEl.offsetHeight;
+    if (width > 0 && height > 0) {
+      pageFitWidth = width;
+      pageFitHeight = height;
     }
   }
 
-  /** Zoom toward a point in viewport coordinates (pane center, pinch center, etc.). */
-  function setScaleAtFocalPoint(
+  function refitPageContent() {
+    pageFitWidth = 0;
+    pageFitHeight = 0;
+    void tick().then(measurePageFit);
+  }
+
+  function observePageViewport(node: HTMLElement) {
+    const initialRect = node.getBoundingClientRect();
+    let viewportWidth = initialRect.width;
+    let viewportHeight = initialRect.height;
+    const observer = new ResizeObserver(() => {
+      const rect = node.getBoundingClientRect();
+      if (rect.width === viewportWidth && rect.height === viewportHeight) return;
+      viewportWidth = rect.width;
+      viewportHeight = rect.height;
+      refitPageContent();
+    });
+    observer.observe(node);
+    requestAnimationFrame(measurePageFit);
+    return { destroy: () => observer.disconnect() };
+  }
+
+  let measuredPage: string | undefined;
+  $effect(() => {
+    const page = pages[currentPage];
+    if (page === measuredPage) return;
+    measuredPage = page;
+    refitPageContent();
+  });
+
+  /** Scale around the pointer while letting the browser handle page scrolling. */
+  async function setScaleAtFocalPoint(
     nextScale: number,
     fx: number,
     fy: number,
@@ -198,8 +234,6 @@
   ) {
     const s = Math.min(SCALE_MAX, Math.max(SCALE_MIN, nextScale));
     const prevScale = scale;
-    const prevTx = translateX;
-    const prevTy = translateY;
     if (Math.abs(s - prevScale) < 1e-6) {
       if (ZOOM_DEBUG) {
         console.log("[SvgPreview zoom] skip (no change)", { reason, scale: prevScale });
@@ -207,32 +241,44 @@
       return;
     }
     const el = contentEl;
-    if (el) {
-      const r = el.getBoundingClientRect();
-      const ox = r.left + r.width / 2;
-      const oy = r.top + r.height / 2;
-      const k = s / prevScale;
-      translateX += (fx - ox) * (1 - k);
-      translateY += (fy - oy) * (1 - k);
+    const pane = viewportEl;
+    if (previewInteractionMode === "pan") {
+      if (el) {
+        const rect = el.getBoundingClientRect();
+        const k = s / prevScale;
+        translateX += (fx - (rect.left + rect.width / 2)) * (1 - k);
+        translateY += (fy - (rect.top + rect.height / 2)) * (1 - k);
+      }
+      scale = s;
+      return;
+    }
+    if (el && pane) {
+      const previousRect = el.getBoundingClientRect();
+      const focalX = previousRect.width > 0
+        ? (fx - previousRect.left) / previousRect.width
+        : 0;
+      const focalY = previousRect.height > 0
+        ? (fy - previousRect.top) / previousRect.height
+        : 0;
+      scale = s;
+      await tick();
+      const nextRect = el.getBoundingClientRect();
+      pane.scrollLeft += nextRect.left + focalX * nextRect.width - fx;
+      pane.scrollTop += nextRect.top + focalY * nextRect.height - fy;
       if (ZOOM_DEBUG) {
         console.log("[SvgPreview zoom]", reason, {
-          scale: { from: prevScale, to: s, k },
-          translate: {
-            from: [prevTx, prevTy],
-            to: [translateX, translateY],
-            delta: [translateX - prevTx, translateY - prevTy],
-          },
+          scale: { from: prevScale, to: s },
           focal: { fx, fy },
-          content: { w: r.width, h: r.height, ox, oy },
+          content: {
+            from: { w: previousRect.width, h: previousRect.height },
+            to: { w: nextRect.width, h: nextRect.height },
+          },
+          scroll: { left: pane.scrollLeft, top: pane.scrollTop },
         });
       }
-    } else if (ZOOM_DEBUG) {
-      console.warn("[SvgPreview zoom] no content rect — translate unchanged", {
-        reason,
-        scale: { from: prevScale, to: s },
-      });
+    } else {
+      scale = s;
     }
-    scale = s;
   }
 
   /** Zoom in/out toward the center of the preview pane (toolbar buttons). */
@@ -249,13 +295,6 @@
       pr.top + pr.height / 2,
       reason,
     );
-  }
-
-  function touchById(t: TouchList, id: number): Touch | undefined {
-    for (let i = 0; i < t.length; i++) {
-      if (t[i].identifier === id) return t[i];
-    }
-    return undefined;
   }
 
   function onTouchStartGestures(e: TouchEvent) {
@@ -278,23 +317,21 @@
           pinchScaleStart,
           pinchDistStart,
           scale,
-          translateX,
-          translateY,
         });
       }
       e.preventDefault();
-    } else if (e.touches.length === 1 && layout === "paginated") {
-      const p = e.touches[0];
+    } else if (e.touches.length === 1 && previewInteractionMode === "pan") {
+      const touch = e.touches[0];
       touchPanning = true;
-      touchPanId = p.identifier;
-      panTouchStartX = p.clientX;
-      panTouchStartY = p.clientY;
+      touchPanId = touch.identifier;
+      panTouchStartX = touch.clientX;
+      panTouchStartY = touch.clientY;
       panStartTX = translateX;
       panStartTY = translateY;
     }
   }
 
-  function onTouchMoveGestures(e: TouchEvent) {
+  async function onTouchMoveGestures(e: TouchEvent) {
     if (!pages[currentPage]) return;
 
     if (e.touches.length >= 2 && pinchActive) {
@@ -303,15 +340,14 @@
       const t1 = e.touches[1];
       const mx = (t0.clientX + t1.clientX) / 2;
       const my = (t0.clientY + t1.clientY) / 2;
+      const dx = mx - pinchMidX;
+      const dy = my - pinchMidY;
+      if (previewInteractionMode === "pan") {
+        translateX += dx;
+        translateY += dy;
+        await tick();
+      }
 
-      const el = contentEl;
-      const r = el?.getBoundingClientRect();
-      const ox = r ? r.left + r.width / 2 : 0;
-      const oy = r ? r.top + r.height / 2 : 0;
-      const dpx = mx - pinchMidX;
-      const dpy = my - pinchMidY;
-      translateX += dpx;
-      translateY += dpy;
       pinchMidX = mx;
       pinchMidY = my;
 
@@ -322,7 +358,6 @@
       const alpha =
         dd < 0.75 ? 0.07 : dd < 2.5 ? 0.22 : dd < 10 ? 0.48 : 0.78;
       pinchDistFiltered = alpha * rawD + (1 - alpha) * pinchDistFiltered;
-      const prevScale = scale;
       const next = Math.min(
         SCALE_MAX,
         Math.max(
@@ -330,14 +365,7 @@
           pinchScaleStart * (pinchDistFiltered / pinchDistStart),
         ),
       );
-      const k = next / prevScale;
-      if (el && Math.abs(k - 1) > 1e-6) {
-        const ox2 = ox + dpx;
-        const oy2 = oy + dpy;
-        translateX += (mx - ox2) * (1 - k);
-        translateY += (my - oy2) * (1 - k);
-      }
-      scale = next;
+      await setScaleAtFocalPoint(next, mx, my, "pinch");
       pinchMoveLogCounter += 1;
       if (ZOOM_DEBUG && (pinchMoveLogCounter <= 3 || pinchMoveLogCounter % 6 === 0)) {
         console.log("[SvgPreview pinch] move", {
@@ -346,19 +374,17 @@
           pinchDistFiltered,
           distRatio: pinchDistFiltered / pinchDistStart,
           alpha,
-          scale: { from: prevScale, to: next },
-          translateX,
-          translateY,
+          scale: next,
         });
       }
       return;
     }
 
-    if (touchPanning && e.touches.length === 1) {
-      const p = touchById(e.touches, touchPanId) ?? e.touches[0];
+    if (previewInteractionMode === "pan" && touchPanning && e.touches.length === 1) {
+      const touch = touchById(e.touches, touchPanId) ?? e.touches[0];
       e.preventDefault();
-      translateX = panStartTX + (p.clientX - panTouchStartX);
-      translateY = panStartTY + (p.clientY - panTouchStartY);
+      translateX = panStartTX + touch.clientX - panTouchStartX;
+      translateY = panStartTY + touch.clientY - panTouchStartY;
     }
   }
 
@@ -367,21 +393,18 @@
       console.log("[SvgPreview pinch] end (finger lifted)", {
         remainingTouches: e.touches.length,
         scale,
-        translateX,
-        translateY,
       });
     }
     if (e.touches.length < 2) pinchActive = false;
-    if (e.touches.length === 1 && pages[currentPage] && layout === "paginated") {
-      const p = e.touches[0];
+    if (e.touches.length === 1 && previewInteractionMode === "pan") {
+      const touch = e.touches[0];
       touchPanning = true;
-      touchPanId = p.identifier;
-      panTouchStartX = p.clientX;
-      panTouchStartY = p.clientY;
+      touchPanId = touch.identifier;
+      panTouchStartX = touch.clientX;
+      panTouchStartY = touch.clientY;
       panStartTX = translateX;
       panStartTY = translateY;
-    }
-    if (e.touches.length === 0) {
+    } else if (e.touches.length === 0) {
       touchPanning = false;
       touchPanId = -1;
     } else if (touchPanning && touchById(e.touches, touchPanId) === undefined) {
@@ -405,7 +428,7 @@
     setScaleAtFocalPoint(scale * factor, e.clientX, e.clientY, "wheel");
   }
 
-  /** Non-passive touch + wheel so pinch/zoom can preventDefault (browser zoom / overscroll). */
+  /** Non-passive touch + wheel so image pinch and Ctrl/Command-wheel can zoom in place. */
   function previewGestures(node: HTMLElement) {
     const touchOpts: AddEventListenerOptions = { passive: false };
     node.addEventListener("touchstart", onTouchStartGestures, touchOpts);
@@ -424,27 +447,41 @@
     };
   }
 
+  function prevPage() {
+    if (currentPage > 0) currentPage--;
+  }
+
+  function setInteractionMode(nextMode: PreviewInteractionMode) {
+    if (previewInteractionMode === nextMode) return;
+    previewInteractionMode = nextMode;
+    persistPreviewInteractionMode(nextMode);
+    translateX = 0;
+    translateY = 0;
+    isPanning = false;
+    touchPanning = false;
+    if (viewportEl) {
+      viewportEl.scrollLeft = 0;
+      viewportEl.scrollTop = 0;
+    }
+  }
+
   function startPan(e: MouseEvent) {
-    if (layout === "scroll" || !pages[currentPage] || e.button !== 0) return;
-    const t = e.target as HTMLElement | null;
-    if (t?.closest("button")) return;
+    if (previewInteractionMode !== "pan" || !pages[currentPage] || e.button !== 0) return;
+    const target = e.target as HTMLElement | null;
+    if (target?.closest("button")) return;
     isPanning = true;
-    startX = e.clientX - translateX;
-    startY = e.clientY - translateY;
+    panStartX = e.clientX - translateX;
+    panStartY = e.clientY - translateY;
   }
 
   function pan(e: MouseEvent) {
     if (!isPanning) return;
-    translateX = e.clientX - startX;
-    translateY = e.clientY - startY;
+    translateX = e.clientX - panStartX;
+    translateY = e.clientY - panStartY;
   }
 
   function stopPan() {
     isPanning = false;
-  }
-
-  function prevPage() {
-    if (currentPage > 0) currentPage--;
   }
 
   function nextPage() {
@@ -462,12 +499,14 @@
   }
 
   function resetPreviewZoom() {
-    if (ZOOM_DEBUG) {
-      console.log("[SvgPreview] reset", { scale, translateX, translateY });
-    }
+    if (ZOOM_DEBUG) console.log("[SvgPreview] reset", { scale });
     scale = 1;
     translateX = 0;
     translateY = 0;
+    if (viewportEl) {
+      viewportEl.scrollLeft = 0;
+      viewportEl.scrollTop = 0;
+    }
   }
 
   function formatLocation(d: CompileDiagnostic): string {
@@ -676,13 +715,7 @@
 
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div
-    class="flex-1 min-h-0 min-w-0 overflow-hidden relative {pages[currentPage]
-      ? layout === 'paginated'
-        ? isPanning
-          ? 'cursor-grabbing'
-          : 'cursor-grab'
-        : 'cursor-default'
-      : 'cursor-default'}"
+    class="flex-1 min-h-0 min-w-0 overflow-hidden relative"
   >
     {#if pageCount > 0 && pages[currentPage]}
       <div
@@ -691,49 +724,53 @@
         <div
           class="flex w-fit items-center gap-0.5 rounded-md shadow-lg border border-[var(--app-border)] bg-[var(--app-surface-elevated)] p-0.5"
         >
-          {#if layout === "paginated"}
-            <button
-              type="button"
-              onclick={prevPage}
-              disabled={currentPage === 0}
-              class="inline-flex shrink-0 items-center justify-center rounded p-1 text-[var(--app-fg-secondary)] hover:bg-[var(--app-btn-ghost-hover)] disabled:opacity-30 disabled:hover:bg-transparent transition-colors"
-              title="Previous Page"
-            >
-              <ChevronLeft size={15} />
-            </button>
-          {/if}
+          <button
+            type="button"
+            onclick={prevPage}
+            disabled={currentPage === 0}
+            class="inline-flex shrink-0 items-center justify-center rounded p-1 text-[var(--app-fg-secondary)] hover:bg-[var(--app-btn-ghost-hover)] disabled:opacity-30 disabled:hover:bg-transparent transition-colors"
+            title="Previous Page"
+          >
+            <ChevronLeft size={15} />
+          </button>
           <div
             class="px-1.5 text-[11px] font-bold tabular-nums text-[var(--app-fg-secondary)]"
           >
             {pageCount > 0 ? currentPage + 1 : 0} / {pageCount}
           </div>
-          {#if layout === "paginated"}
-            <button
-              type="button"
-              onclick={nextPage}
-              disabled={currentPage >= pageCount - 1}
-              class="inline-flex shrink-0 items-center justify-center rounded p-1 text-[var(--app-fg-secondary)] hover:bg-[var(--app-btn-ghost-hover)] disabled:opacity-30 disabled:hover:bg-transparent transition-colors"
-              title="Next Page"
-            >
-              <ChevronRight size={15} />
-            </button>
-          {/if}
+          <button
+            type="button"
+            onclick={nextPage}
+            disabled={currentPage >= pageCount - 1}
+            class="inline-flex shrink-0 items-center justify-center rounded p-1 text-[var(--app-fg-secondary)] hover:bg-[var(--app-btn-ghost-hover)] disabled:opacity-30 disabled:hover:bg-transparent transition-colors"
+            title="Next Page"
+          >
+            <ChevronRight size={15} />
+          </button>
+        </div>
+
+        <div class="flex w-fit items-center gap-0.5 rounded-md shadow-lg border border-[var(--app-border)] bg-[var(--app-surface-elevated)] p-0.5">
+          <button
+            type="button"
+            onclick={() => setInteractionMode("scroll")}
+            class="inline-flex size-7 shrink-0 items-center justify-center rounded text-[var(--app-fg-secondary)] hover:bg-[var(--app-btn-ghost-hover)] {previewInteractionMode === 'scroll' ? 'bg-[var(--app-btn-ghost-hover)] text-[var(--app-fg)]' : ''}"
+            title="Scroll mode"
+            aria-pressed={previewInteractionMode === "scroll"}
+          >
+            <ScrollText size={14} />
+          </button>
+          <button
+            type="button"
+            onclick={() => setInteractionMode("pan")}
+            class="inline-flex size-7 shrink-0 items-center justify-center rounded text-[var(--app-fg-secondary)] hover:bg-[var(--app-btn-ghost-hover)] {previewInteractionMode === 'pan' ? 'bg-[var(--app-btn-ghost-hover)] text-[var(--app-fg)]' : ''}"
+            title="Pan mode"
+            aria-pressed={previewInteractionMode === "pan"}
+          >
+            <Hand size={14} />
+          </button>
         </div>
 
         <div class="flex w-fit flex-col gap-1">
-          <button
-            type="button"
-            onclick={togglePreviewLayout}
-            class="inline-flex size-7 shrink-0 items-center justify-center rounded-md shadow-md border border-[var(--app-border)] bg-[var(--app-surface-elevated)] text-[var(--app-fg-secondary)] hover:bg-[var(--app-btn-ghost-hover)]"
-            title={layout === "scroll" ? "Single page" : "Continuous scroll"}
-            aria-pressed={layout === "scroll"}
-          >
-            {#if layout === "scroll"}
-              <ScrollText size={14} />
-            {:else}
-              <Square size={14} />
-            {/if}
-          </button>
           <button
             type="button"
             onclick={previewZoomIn}
@@ -754,61 +791,52 @@
             type="button"
             onclick={resetPreviewZoom}
             class="inline-flex size-7 shrink-0 items-center justify-center rounded-md shadow-md border border-[var(--app-border)] bg-[var(--app-surface-elevated)] text-[var(--app-fg-secondary)] hover:bg-[var(--app-btn-ghost-hover)]"
-            title="Reset zoom and pan"
+            title="Reset zoom and scroll"
           >
             <RotateCcw size={14} />
           </button>
         </div>
       </div>
 
-      {#if layout === "scroll"}
-        <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+      <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+      <div
+        bind:this={viewportEl}
+        class="absolute inset-0 {previewInteractionMode === 'scroll' ? 'overflow-auto' : 'overflow-hidden'} p-3 sm:p-4 {previewInteractionMode === 'pan' ? (isPanning ? 'cursor-grabbing' : 'cursor-grab') : 'cursor-auto'}"
+        use:previewGestures
+        use:observePageViewport
+        onmousedown={startPan}
+        style:touch-action={previewInteractionMode === "pan" ? "none" : "auto"}
+        role="region"
+        aria-label={previewInteractionMode === "scroll" ? "Scrollable document preview" : "Pannable document preview"}
+        tabindex="0"
+      >
         <div
-          class="absolute inset-0 overflow-y-auto overflow-x-hidden p-3 sm:p-4"
-          style:touch-action="pan-y pinch-zoom"
-          use:previewGestures
-          role="application"
-          aria-label="Scroll through pages; Ctrl+scroll or pinch to zoom"
-          tabindex="-1"
+          class="flex h-full w-full items-start"
         >
           <div
-            bind:this={contentEl}
-            style:transform="scale({scale})"
-            style:transform-origin="top center"
-            class="mx-auto flex w-full max-w-full flex-col items-center gap-6 pb-8 will-change-transform select-none"
+            class="relative m-auto shrink-0 {pageFitWidth > 0 ? '' : 'max-h-full max-w-full'}"
+            style:width={pageFitWidth > 0
+              ? `${pageFitWidth * (previewInteractionMode === "scroll" ? scale : 1)}px`
+              : undefined}
+            style:height={pageFitHeight > 0
+              ? `${pageFitHeight * (previewInteractionMode === "scroll" ? scale : 1)}px`
+              : undefined}
           >
-            {#each pages as page, i (i)}
-              <div
-                class="typst-preview-graphic typst-preview-graphic--scroll w-full max-w-full shrink-0 drop-shadow-md"
-              >
-                {@html page}
-              </div>
-            {/each}
-          </div>
-        </div>
-      {:else}
-        <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-        <div
-          bind:this={viewportEl}
-          class="absolute inset-0 flex items-center justify-center overflow-hidden p-3 sm:p-4"
-          style:touch-action="none"
-          use:previewGestures
-          onmousedown={startPan}
-          role="application"
-          aria-label="Pinch or Ctrl+scroll to zoom; drag to pan"
-          tabindex="-1"
-        >
-          <div
-            bind:this={contentEl}
-            style:transform="translate3d({translateX}px, {translateY}px, 0) scale({scale})"
-            class="flex h-full w-full origin-center items-center justify-center will-change-transform transition-none select-none [backface-visibility:hidden]"
-          >
-            <div class="typst-preview-graphic max-h-full max-w-full drop-shadow-md">
+            <div
+              bind:this={contentEl}
+              class="typst-preview-graphic {pageFitWidth > 0 ? 'absolute left-0 top-0 max-h-none max-w-none' : 'relative max-h-full max-w-full'} shrink-0 drop-shadow-md"
+              style:width={pageFitWidth > 0 ? `${pageFitWidth}px` : undefined}
+              style:height={pageFitHeight > 0 ? `${pageFitHeight}px` : undefined}
+              style:transform={previewInteractionMode === "pan"
+                ? `translate3d(${translateX}px, ${translateY}px, 0) scale(${scale})`
+                : `scale(${scale})`}
+              style:transform-origin={previewInteractionMode === "pan" ? "center" : "top left"}
+            >
               {@html pages[currentPage]}
             </div>
           </div>
         </div>
-      {/if}
+      </div>
     {:else}
       <div
         class="absolute inset-0 flex items-center justify-center text-[var(--preview-empty)] text-sm p-8 text-center"
@@ -835,8 +863,4 @@
     height: auto;
   }
 
-  .typst-preview-graphic--scroll :global(svg) {
-    max-height: none;
-    margin-inline: auto;
-  }
 </style>
