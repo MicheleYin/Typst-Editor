@@ -127,6 +127,7 @@
   } from "./lib/appCommands";
   import { runTypstExportFromModal } from "./lib/appTypstExport";
   import { isIpadOs } from "./lib/ipadOs";
+  import { projectsUseDocumentDirForPlatform } from "./lib/workspacePlatform";
   import pkg from "../package.json";
 
   let appName = $state(pkg.name);
@@ -154,8 +155,11 @@
   let currentFilePath = $state<string | null>(null);
   let currentFolder = $state<string | null>(null);
   let iosProjectsList = $state<IosProjectSummary[]>([]);
-  /** `true` on iOS (ZIP import only); `false` on desktop (folder picker works). */
-  let projectsUseDocumentDir = $state(true);
+  /**
+   * `true` on iOS (document-dir projects); `false` on desktop (folders on disk).
+   * Derived only from an explicit `TAURI_ENV_PLATFORM` allowlist (see workspacePlatform.ts).
+   */
+  let projectsUseDocumentDir = $state(projectsUseDocumentDirForPlatform());
   /** Active project folder (absolute path); null on project hub */
   let iosProjectPath = $state<string | null>(null);
   let iosProjectFolderId = $state<string | null>(null);
@@ -1645,15 +1649,13 @@
         /* web dev / older host: keep native assumption (no in-app menu) */
       });
 
-    // Must resolve workspace mode before loading the hub list: default state is iOS-style
-    // (`true`). On macOS/Windows/Linux, `false` means "open folders on disk" + Rust-backed
-    // `recent-desktop-projects.json`. Calling `refreshIosProjects()` too early used the wrong
-    // branch and made recents look empty after every restart.
+    // Confirm workspace mode with Rust (build-time default already matches target_os).
+    // Then load the hub list: desktop uses recent-desktop-projects.json; iOS uses Documents.
     void (async () => {
       try {
         projectsUseDocumentDir = await invoke<boolean>("workspace_projects_use_document_dir");
       } catch {
-        /* web / odd host: keep default */
+        /* web / odd host: keep build-time default */
       }
       await refreshIosProjects();
     })();
