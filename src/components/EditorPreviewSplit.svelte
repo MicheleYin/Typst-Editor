@@ -4,6 +4,7 @@
   import type { TypstFontFace } from "../lib/typstFonts";
   import type { AppAppearance } from "../lib/monacoThemes";
   import type { EmbedPdfDiskSaveApi } from "../lib/embedPdfAppChrome";
+  import type { PreviewInteractionMode } from "../lib/appLayoutStorage";
   import EditorQuickActions from "./EditorQuickActions.svelte";
   import FilePreviewPane from "./FilePreviewPane.svelte";
 
@@ -27,8 +28,7 @@
     onPdfDiskApiReady,
     currentPage = $bindable(0),
     scale = $bindable(1),
-    translateX = $bindable(0),
-    translateY = $bindable(0),
+    previewInteractionMode = $bindable<PreviewInteractionMode>("scroll"),
     editor,
     typstFontFaces,
     showTypstToolbar,
@@ -55,8 +55,7 @@
     onPdfDiskApiReady: (api: EmbedPdfDiskSaveApi | null) => void;
     currentPage?: number;
     scale?: number;
-    translateX?: number;
-    translateY?: number;
+    previewInteractionMode?: PreviewInteractionMode;
     editor: monaco.editor.IStandaloneCodeEditor | undefined;
     typstFontFaces: TypstFontFace[];
     showTypstToolbar: boolean;
@@ -90,8 +89,7 @@
         {onPdfDiskApiReady}
         bind:currentPage
         bind:scale
-        bind:translateX
-        bind:translateY
+        bind:previewInteractionMode
       />
     </div>
   {:else}
@@ -129,8 +127,7 @@
           {onPdfDiskApiReady}
           bind:currentPage
           bind:scale
-          bind:translateX
-          bind:translateY
+          bind:previewInteractionMode
         />
       </div>
     {/if}

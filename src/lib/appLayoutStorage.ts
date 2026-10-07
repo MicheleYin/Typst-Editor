@@ -8,6 +8,9 @@ export const APP_MIN_HEIGHT_PX = 300;
 export const SIDEBAR_W_KEY = "typst-editor-sidebar-width";
 export const SIDEBAR_MIN = 160;
 export const SIDEBAR_MAX = 560;
+export const PREVIEW_INTERACTION_MODE_KEY = "typst-editor-preview-interaction-mode";
+
+export type PreviewInteractionMode = "scroll" | "pan";
 
 export function readStoredSplitRatio(): number {
   try {
@@ -29,4 +32,23 @@ export function readStoredSidebarWidth(): number {
     /* ignore */
   }
   return 260;
+}
+
+export function readStoredPreviewInteractionMode(): PreviewInteractionMode {
+  try {
+    return localStorage.getItem(PREVIEW_INTERACTION_MODE_KEY) === "pan"
+      ? "pan"
+      : "scroll";
+  } catch {
+    /* ignore */
+  }
+  return "scroll";
+}
+
+export function persistPreviewInteractionMode(mode: PreviewInteractionMode): void {
+  try {
+    localStorage.setItem(PREVIEW_INTERACTION_MODE_KEY, mode);
+  } catch {
+    /* ignore */
+  }
 }

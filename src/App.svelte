@@ -118,6 +118,8 @@
     SIDEBAR_W_KEY,
     readStoredSplitRatio,
     readStoredSidebarWidth,
+    readStoredPreviewInteractionMode,
+    type PreviewInteractionMode,
   } from "./lib/appLayoutStorage";
   import { editorSplitRatioFromPointer, sidebarWidthFromPointer } from "./lib/appPaneResizeGeometry";
   import {
@@ -512,8 +514,7 @@
   });
 
   let scale = $state(1);
-  let translateX = $state(0);
-  let translateY = $state(0);
+  let previewInteractionMode = $state<PreviewInteractionMode>(readStoredPreviewInteractionMode());
   let folderFiles = $state<FolderExplorerNode[]>([]);
 
   let sidebarWidth = $state(readStoredSidebarWidth());
@@ -1906,8 +1907,7 @@
       onPdfDiskApiReady={handlePdfDiskApiReady}
       bind:currentPage
       bind:scale
-      bind:translateX
-      bind:translateY
+      bind:previewInteractionMode
       editor={editor}
       typstFontFaces={typstFontFaces}
       showTypstToolbar={!isCurrentBinary && !!(currentFilePath && isTypstPath(currentFilePath))}

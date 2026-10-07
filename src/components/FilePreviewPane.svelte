@@ -1,7 +1,12 @@
 <script lang="ts">
-  import { ZoomIn, ZoomOut, RotateCcw } from "lucide-svelte";
+  import { tick } from "svelte";
+  import { Hand, ScrollText, ZoomIn, ZoomOut, RotateCcw } from "lucide-svelte";
   import type { AppAppearance } from "../lib/monacoThemes";
   import type { EmbedPdfDiskSaveApi } from "../lib/embedPdfAppChrome";
+  import {
+    persistPreviewInteractionMode,
+    type PreviewInteractionMode,
+  } from "../lib/appLayoutStorage";
   import EmbedPdfPane from "./EmbedPdfPane.svelte";
   import SvgPreview from "./SvgPreview.svelte";
 
@@ -44,8 +49,7 @@
     onPdfDiskApiReady,
     currentPage = $bindable(0),
     scale = $bindable(1),
-    translateX = $bindable(0),
-    translateY = $bindable(0),
+    previewInteractionMode = $bindable<PreviewInteractionMode>("scroll"),
   } = $props<{
     mode: PreviewMode;
     /** Used by the PDF viewer (EmbedPDF) to match app light/dark. */
@@ -54,8 +58,7 @@
     onPdfDiskApiReady?: (api: EmbedPdfDiskSaveApi | null) => void;
     currentPage?: number;
     scale?: number;
-    translateX?: number;
-    translateY?: number;
+    previewInteractionMode?: PreviewInteractionMode;
   }>();
 
   let svgBlobUrl = $state<string | null>(null);
@@ -90,6 +93,7 @@
         scale = 1;
         translateX = 0;
         translateY = 0;
+        rasterViewportEl?.scrollTo(0, 0);
       }
     } else {
       rasterImageZoomKey = null;
@@ -98,11 +102,13 @@
       scale = 1;
       translateX = 0;
       translateY = 0;
+      rasterViewportEl?.scrollTo(0, 0);
     }
     if (k === "typst" && prevRasterPreviewKind !== "typst") {
       scale = 1;
       translateX = 0;
       translateY = 0;
+      rasterViewportEl?.scrollTo(0, 0);
     }
     prevRasterPreviewKind = k;
   });
@@ -111,22 +117,14 @@
   const SCALE_MAX = 8;
 
   let rasterViewportEl = $state<HTMLElement | null>(null);
-  let rasterContentEl = $state<HTMLElement | null>(null);
-
+  let rasterContentEl = $state<HTMLImageElement | null>(null);
+  let rasterFitWidth = $state(0);
+  let rasterFitHeight = $state(0);
+  let translateX = $state(0);
+  let translateY = $state(0);
   let isRasterPanning = $state(false);
   let rasterPanStartX = 0;
   let rasterPanStartY = 0;
-  let rasterPanOriginTx = 0;
-  let rasterPanOriginTy = 0;
-
-  let pinchActive = false;
-  let pinchScaleStart = 1;
-  let pinchDistStart = 1;
-  let pinchDistFiltered = 1;
-  let pinchLastRawD = 1;
-  /** Pinch midpoint (viewport px) — for two-finger pan + zoom toward fingers */
-  let pinchMidX = 0;
-  let pinchMidY = 0;
 
   let touchPanning = false;
   let touchPanId = -1;
@@ -135,6 +133,13 @@
   let panStartTX = 0;
   let panStartTY = 0;
 
+  let pinchActive = false;
+  let pinchScaleStart = 1;
+  let pinchDistStart = 1;
+  let pinchDistFiltered = 1;
+  let pinchLastRawD = 1;
+  let pinchMidX = 0;
+  let pinchMidY = 0;
   function touchDistance(t: TouchList): number {
     if (t.length < 2) return 0;
     const dx = t[0].clientX - t[1].clientX;
@@ -142,28 +147,89 @@
     return Math.hypot(dx, dy);
   }
 
-  function touchById(t: TouchList, id: number): Touch | undefined {
-    for (let i = 0; i < t.length; i++) {
-      if (t[i].identifier === id) return t[i];
+  function touchById(touches: TouchList, id: number): Touch | undefined {
+    for (let index = 0; index < touches.length; index++) {
+      if (touches[index].identifier === id) return touches[index];
     }
     return undefined;
   }
 
+  function measureRasterFit(viewport = rasterViewportEl) {
+    const image = rasterContentEl;
+    if (!image || !viewport || image.naturalWidth === 0 || image.naturalHeight === 0) return;
+    const style = getComputedStyle(viewport);
+    const availableWidth =
+      viewport.clientWidth -
+      Number.parseFloat(style.paddingLeft) -
+      Number.parseFloat(style.paddingRight);
+    const availableHeight =
+      viewport.clientHeight -
+      Number.parseFloat(style.paddingTop) -
+      Number.parseFloat(style.paddingBottom);
+    const fitScale = Math.min(
+      availableWidth / image.naturalWidth,
+      availableHeight / image.naturalHeight,
+      1,
+    );
+    rasterFitWidth = image.naturalWidth * fitScale;
+    rasterFitHeight = image.naturalHeight * fitScale;
+  }
+
+  function refitRasterContent() {
+    rasterFitWidth = 0;
+    rasterFitHeight = 0;
+    void tick().then(measureRasterFit);
+  }
+
+  function observeRasterViewport(node: HTMLElement) {
+    const initialRect = node.getBoundingClientRect();
+    let viewportWidth = initialRect.width;
+    let viewportHeight = initialRect.height;
+    const observer = new ResizeObserver(() => {
+      const rect = node.getBoundingClientRect();
+      if (rect.width === viewportWidth && rect.height === viewportHeight) return;
+      viewportWidth = rect.width;
+      viewportHeight = rect.height;
+      refitRasterContent();
+    });
+    observer.observe(node);
+    requestAnimationFrame(() => measureRasterFit(node));
+    return { destroy: () => observer.disconnect() };
+  }
+
   /** Zoom toward a viewport point (touch pinch midpoint, Ctrl+wheel / trackpad pinch cursor). */
-  function setRasterScaleAtFocalPoint(nextScale: number, fx: number, fy: number) {
+  async function setRasterScaleAtFocalPoint(nextScale: number, fx: number, fy: number) {
     const s = Math.min(SCALE_MAX, Math.max(SCALE_MIN, nextScale));
     const prevScale = scale;
     const el = rasterContentEl;
+    const pane = rasterViewportEl;
     if (Math.abs(s - prevScale) < 1e-6) return;
-    if (el) {
-      const r = el.getBoundingClientRect();
-      const ox = r.left + r.width / 2;
-      const oy = r.top + r.height / 2;
-      const k = s / prevScale;
-      translateX += (fx - ox) * (1 - k);
-      translateY += (fy - oy) * (1 - k);
+    if (previewInteractionMode === "pan") {
+      if (el) {
+        const rect = el.getBoundingClientRect();
+        const k = s / prevScale;
+        translateX += (fx - (rect.left + rect.width / 2)) * (1 - k);
+        translateY += (fy - (rect.top + rect.height / 2)) * (1 - k);
+      }
+      scale = s;
+      return;
     }
-    scale = s;
+    if (el && pane) {
+      const previousRect = el.getBoundingClientRect();
+      const focalX = previousRect.width > 0
+        ? (fx - previousRect.left) / previousRect.width
+        : 0;
+      const focalY = previousRect.height > 0
+        ? (fy - previousRect.top) / previousRect.height
+        : 0;
+      scale = s;
+      await tick();
+      const nextRect = el.getBoundingClientRect();
+      pane.scrollLeft += nextRect.left + focalX * nextRect.width - fx;
+      pane.scrollTop += nextRect.top + focalY * nextRect.height - fy;
+    } else {
+      scale = s;
+    }
   }
 
   function setRasterScaleFromViewportCenter(nextScale: number) {
@@ -194,33 +260,30 @@
       pinchMidX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
       pinchMidY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
       e.preventDefault();
-    } else if (e.touches.length === 1) {
-      const p = e.touches[0];
+    } else if (e.touches.length === 1 && previewInteractionMode === "pan") {
+      const touch = e.touches[0];
       touchPanning = true;
-      touchPanId = p.identifier;
-      panTouchStartX = p.clientX;
-      panTouchStartY = p.clientY;
+      touchPanId = touch.identifier;
+      panTouchStartX = touch.clientX;
+      panTouchStartY = touch.clientY;
       panStartTX = translateX;
       panStartTY = translateY;
     }
   }
 
-  function onRasterTouchMove(e: TouchEvent) {
+  async function onRasterTouchMove(e: TouchEvent) {
     if (e.touches.length >= 2 && pinchActive) {
       e.preventDefault();
       const t0 = e.touches[0];
       const t1 = e.touches[1];
       const mx = (t0.clientX + t1.clientX) / 2;
       const my = (t0.clientY + t1.clientY) / 2;
-
-      const el = rasterContentEl;
-      const r = el?.getBoundingClientRect();
-      const ox = r ? r.left + r.width / 2 : 0;
-      const oy = r ? r.top + r.height / 2 : 0;
-      const dpx = mx - pinchMidX;
-      const dpy = my - pinchMidY;
-      translateX += dpx;
-      translateY += dpy;
+      const dx = mx - pinchMidX;
+      const dy = my - pinchMidY;
+      if (previewInteractionMode === "pan") {
+        translateX += dx;
+        translateY += dy;
+      }
       pinchMidX = mx;
       pinchMidY = my;
 
@@ -230,7 +293,6 @@
       const alpha =
         dd < 0.75 ? 0.07 : dd < 2.5 ? 0.22 : dd < 10 ? 0.48 : 0.78;
       pinchDistFiltered = alpha * rawD + (1 - alpha) * pinchDistFiltered;
-      const prevScale = scale;
       const next = Math.min(
         SCALE_MAX,
         Math.max(
@@ -238,37 +300,29 @@
           pinchScaleStart * (pinchDistFiltered / pinchDistStart),
         ),
       );
-      const k = next / prevScale;
-      if (el && Math.abs(k - 1) > 1e-6) {
-        const ox2 = ox + dpx;
-        const oy2 = oy + dpy;
-        translateX += (mx - ox2) * (1 - k);
-        translateY += (my - oy2) * (1 - k);
-      }
-      scale = next;
+      await setRasterScaleAtFocalPoint(next, mx, my);
       return;
     }
 
-    if (touchPanning && e.touches.length === 1) {
-      const p = touchById(e.touches, touchPanId) ?? e.touches[0];
+    if (previewInteractionMode === "pan" && touchPanning && e.touches.length === 1) {
+      const touch = touchById(e.touches, touchPanId) ?? e.touches[0];
       e.preventDefault();
-      translateX = panStartTX + (p.clientX - panTouchStartX);
-      translateY = panStartTY + (p.clientY - panTouchStartY);
+      translateX = panStartTX + touch.clientX - panTouchStartX;
+      translateY = panStartTY + touch.clientY - panTouchStartY;
     }
   }
 
   function onRasterTouchEnd(e: TouchEvent) {
     if (e.touches.length < 2) pinchActive = false;
-    if (e.touches.length === 1) {
-      const p = e.touches[0];
+    if (e.touches.length === 1 && previewInteractionMode === "pan") {
+      const touch = e.touches[0];
       touchPanning = true;
-      touchPanId = p.identifier;
-      panTouchStartX = p.clientX;
-      panTouchStartY = p.clientY;
+      touchPanId = touch.identifier;
+      panTouchStartX = touch.clientX;
+      panTouchStartY = touch.clientY;
       panStartTX = translateX;
       panStartTY = translateY;
-    }
-    if (e.touches.length === 0) {
+    } else if (e.touches.length === 0) {
       touchPanning = false;
       touchPanId = -1;
     } else if (touchPanning && touchById(e.touches, touchPanId) === undefined) {
@@ -303,27 +357,6 @@
     };
   }
 
-  function startRasterMousePan(e: MouseEvent) {
-    if (e.button !== 0) return;
-    const t = e.target as HTMLElement | null;
-    if (t?.closest("button")) return;
-    isRasterPanning = true;
-    rasterPanStartX = e.clientX;
-    rasterPanStartY = e.clientY;
-    rasterPanOriginTx = translateX;
-    rasterPanOriginTy = translateY;
-  }
-
-  function onRasterMouseMove(e: MouseEvent) {
-    if (!isRasterPanning) return;
-    translateX = rasterPanOriginTx + (e.clientX - rasterPanStartX);
-    translateY = rasterPanOriginTy + (e.clientY - rasterPanStartY);
-  }
-
-  function stopRasterMousePan() {
-    isRasterPanning = false;
-  }
-
   function rasterZoomIn() {
     setRasterScaleFromViewportCenter(scale * 1.2);
   }
@@ -332,20 +365,47 @@
     setRasterScaleFromViewportCenter(scale / 1.2);
   }
 
+  function setRasterInteractionMode(nextMode: PreviewInteractionMode) {
+    if (previewInteractionMode === nextMode) return;
+    previewInteractionMode = nextMode;
+    persistPreviewInteractionMode(nextMode);
+    translateX = 0;
+    translateY = 0;
+    isRasterPanning = false;
+    touchPanning = false;
+    rasterViewportEl?.scrollTo(0, 0);
+  }
+
+  function startRasterMousePan(e: MouseEvent) {
+    if (previewInteractionMode !== "pan" || e.button !== 0) return;
+    const target = e.target as HTMLElement | null;
+    if (target?.closest("button")) return;
+    isRasterPanning = true;
+    rasterPanStartX = e.clientX - translateX;
+    rasterPanStartY = e.clientY - translateY;
+  }
+
+  function onRasterMouseMove(e: MouseEvent) {
+    if (!isRasterPanning) return;
+    translateX = e.clientX - rasterPanStartX;
+    translateY = e.clientY - rasterPanStartY;
+  }
+
+  function stopRasterMousePan() {
+    isRasterPanning = false;
+  }
+
   function rasterResetZoom() {
     scale = 1;
     translateX = 0;
     translateY = 0;
+    rasterViewportEl?.scrollTo(0, 0);
   }
-
-  let rasterGesturesActive = $derived(
-    mode.kind === "image" || mode.kind === "svg-inline",
-  );
 </script>
 
 <svelte:window
-  onmousemove={rasterGesturesActive && isRasterPanning ? onRasterMouseMove : null}
-  onmouseup={rasterGesturesActive ? stopRasterMousePan : null}
+  onmousemove={isRasterPanning ? onRasterMouseMove : null}
+  onmouseup={stopRasterMousePan}
 />
 
 {#if mode.kind === "typst"}
@@ -369,8 +429,7 @@
         warnings={mode.warnings}
         stalePreview={mode.stale}
         bind:scale
-        bind:translateX
-        bind:translateY
+        bind:previewInteractionMode
       />
     </div>
   </div>
@@ -390,6 +449,26 @@
       <div
         class="absolute top-2 right-2 z-10 flex flex-col gap-1.5 pointer-events-auto"
       >
+        <div class="flex w-fit items-center gap-0.5 rounded-md shadow-lg border border-[var(--app-border)] bg-[var(--app-surface-elevated)] p-0.5">
+          <button
+            type="button"
+            onclick={() => setRasterInteractionMode("scroll")}
+            class="inline-flex size-7 shrink-0 items-center justify-center rounded text-[var(--app-fg-secondary)] hover:bg-[var(--app-btn-ghost-hover)] {previewInteractionMode === 'scroll' ? 'bg-[var(--app-btn-ghost-hover)] text-[var(--app-fg)]' : ''}"
+            title="Scroll mode"
+            aria-pressed={previewInteractionMode === "scroll"}
+          >
+            <ScrollText size={14} />
+          </button>
+          <button
+            type="button"
+            onclick={() => setRasterInteractionMode("pan")}
+            class="inline-flex size-7 shrink-0 items-center justify-center rounded text-[var(--app-fg-secondary)] hover:bg-[var(--app-btn-ghost-hover)] {previewInteractionMode === 'pan' ? 'bg-[var(--app-btn-ghost-hover)] text-[var(--app-fg)]' : ''}"
+            title="Pan mode"
+            aria-pressed={previewInteractionMode === "pan"}
+          >
+            <Hand size={14} />
+          </button>
+        </div>
         <button
           type="button"
           onclick={rasterZoomIn}
@@ -410,34 +489,50 @@
           type="button"
           onclick={rasterResetZoom}
           class="p-2 rounded-lg shadow-lg border border-[var(--app-border)] bg-[var(--app-surface-elevated)] text-[var(--app-fg-secondary)] hover:bg-[var(--app-btn-ghost-hover)]"
-          title="Reset zoom and pan"
+          title="Reset zoom and scroll"
         >
           <RotateCcw size={18} />
         </button>
       </div>
-      <!-- svelte-ignore a11y_no_static_element_interactions -->
-      <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+      <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
       <div
         bind:this={rasterViewportEl}
-        class="absolute inset-0 flex items-center justify-center overflow-hidden p-3 sm:p-4"
-        style:touch-action="none"
+        class="absolute inset-0 {previewInteractionMode === 'scroll' ? 'overflow-auto' : 'overflow-hidden'} p-3 sm:p-4 {previewInteractionMode === 'pan' ? (isRasterPanning ? 'cursor-grabbing' : 'cursor-grab') : 'cursor-auto'}"
         use:rasterPreviewGestures
+        use:observeRasterViewport
         onmousedown={startRasterMousePan}
-        role="application"
-        aria-label="Pinch or Ctrl+scroll to zoom; drag to pan"
-        tabindex="-1"
+        style:touch-action={previewInteractionMode === "pan" ? "none" : "auto"}
+        role="region"
+        aria-label={previewInteractionMode === "scroll" ? "Scrollable image preview" : "Pannable image preview"}
+        tabindex="0"
       >
         <div
-          bind:this={rasterContentEl}
-          class="flex h-full w-full origin-center items-center justify-center will-change-transform transition-none select-none [backface-visibility:hidden]"
-          style:transform="translate3d({translateX}px, {translateY}px, 0) scale({scale})"
+          class="flex h-full w-full items-start"
         >
-          <img
-            src={mode.url}
-            alt=""
-            draggable="false"
-            class="max-h-full max-w-full object-contain shadow-lg rounded-sm border border-[var(--app-border)]"
-          />
+          <div
+            class="relative m-auto shrink-0 {rasterFitWidth > 0 ? '' : 'max-h-full max-w-full'}"
+            style:width={rasterFitWidth > 0
+              ? `${rasterFitWidth * (previewInteractionMode === "scroll" ? scale : 1)}px`
+              : undefined}
+            style:height={rasterFitHeight > 0
+              ? `${rasterFitHeight * (previewInteractionMode === "scroll" ? scale : 1)}px`
+              : undefined}
+          >
+            <img
+              bind:this={rasterContentEl}
+              src={mode.url}
+              alt=""
+              draggable="false"
+              onload={refitRasterContent}
+              class="{rasterFitWidth > 0 ? 'absolute left-0 top-0 max-h-none max-w-none' : 'relative max-h-full max-w-full'} object-contain shadow-lg rounded-sm border border-[var(--app-border)] select-none"
+              style:width={rasterFitWidth > 0 ? `${rasterFitWidth}px` : undefined}
+              style:height={rasterFitHeight > 0 ? `${rasterFitHeight}px` : undefined}
+              style:transform={previewInteractionMode === "pan"
+                ? `translate3d(${translateX}px, ${translateY}px, 0) scale(${scale})`
+                : `scale(${scale})`}
+              style:transform-origin={previewInteractionMode === "pan" ? "center" : "top left"}
+            />
+          </div>
         </div>
       </div>
     </div>
@@ -510,6 +605,26 @@
       <div
         class="absolute top-2 right-2 z-10 flex flex-col gap-1.5 pointer-events-auto"
       >
+        <div class="flex w-fit items-center gap-0.5 rounded-md shadow-lg border border-[var(--app-border)] bg-[var(--app-surface-elevated)] p-0.5">
+          <button
+            type="button"
+            onclick={() => setRasterInteractionMode("scroll")}
+            class="inline-flex size-7 shrink-0 items-center justify-center rounded text-[var(--app-fg-secondary)] hover:bg-[var(--app-btn-ghost-hover)] {previewInteractionMode === 'scroll' ? 'bg-[var(--app-btn-ghost-hover)] text-[var(--app-fg)]' : ''}"
+            title="Scroll mode"
+            aria-pressed={previewInteractionMode === "scroll"}
+          >
+            <ScrollText size={14} />
+          </button>
+          <button
+            type="button"
+            onclick={() => setRasterInteractionMode("pan")}
+            class="inline-flex size-7 shrink-0 items-center justify-center rounded text-[var(--app-fg-secondary)] hover:bg-[var(--app-btn-ghost-hover)] {previewInteractionMode === 'pan' ? 'bg-[var(--app-btn-ghost-hover)] text-[var(--app-fg)]' : ''}"
+            title="Pan mode"
+            aria-pressed={previewInteractionMode === "pan"}
+          >
+            <Hand size={14} />
+          </button>
+        </div>
         <button
           type="button"
           onclick={rasterZoomIn}
@@ -530,35 +645,51 @@
           type="button"
           onclick={rasterResetZoom}
           class="p-2 rounded-lg shadow-lg border border-[var(--app-border)] bg-[var(--app-surface-elevated)] text-[var(--app-fg-secondary)] hover:bg-[var(--app-btn-ghost-hover)]"
-          title="Reset zoom and pan"
+          title="Reset zoom and position"
         >
           <RotateCcw size={18} />
         </button>
       </div>
       {#if svgBlobUrl}
-        <!-- svelte-ignore a11y_no_static_element_interactions -->
-        <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+        <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
         <div
           bind:this={rasterViewportEl}
-          class="absolute inset-0 flex items-center justify-center overflow-hidden p-3 sm:p-4"
-          style:touch-action="none"
+          class="absolute inset-0 {previewInteractionMode === 'scroll' ? 'overflow-auto' : 'overflow-hidden'} p-3 sm:p-4 {previewInteractionMode === 'pan' ? (isRasterPanning ? 'cursor-grabbing' : 'cursor-grab') : 'cursor-auto'}"
           use:rasterPreviewGestures
+          use:observeRasterViewport
           onmousedown={startRasterMousePan}
-          role="application"
-          aria-label="Pinch or Ctrl+scroll to zoom; drag to pan"
-          tabindex="-1"
+          style:touch-action={previewInteractionMode === "pan" ? "none" : "auto"}
+          role="region"
+          aria-label={previewInteractionMode === "scroll" ? "Scrollable SVG preview" : "Pannable SVG preview"}
+          tabindex="0"
         >
           <div
-            bind:this={rasterContentEl}
-            class="flex h-full w-full origin-center items-center justify-center will-change-transform transition-none select-none [backface-visibility:hidden]"
-            style:transform="translate3d({translateX}px, {translateY}px, 0) scale({scale})"
+            class="flex h-full w-full items-start"
           >
-            <img
-              src={svgBlobUrl}
-              alt=""
-              draggable="false"
-              class="max-h-full max-w-full object-contain drop-shadow-md"
-            />
+            <div
+              class="relative m-auto shrink-0 {rasterFitWidth > 0 ? '' : 'max-h-full max-w-full'}"
+              style:width={rasterFitWidth > 0
+                ? `${rasterFitWidth * (previewInteractionMode === "scroll" ? scale : 1)}px`
+                : undefined}
+              style:height={rasterFitHeight > 0
+                ? `${rasterFitHeight * (previewInteractionMode === "scroll" ? scale : 1)}px`
+                : undefined}
+            >
+              <img
+                bind:this={rasterContentEl}
+                src={svgBlobUrl}
+                alt=""
+                draggable="false"
+                onload={refitRasterContent}
+                class="{rasterFitWidth > 0 ? 'absolute left-0 top-0 max-h-none max-w-none' : 'relative max-h-full max-w-full'} object-contain drop-shadow-md select-none"
+                style:width={rasterFitWidth > 0 ? `${rasterFitWidth}px` : undefined}
+                style:height={rasterFitHeight > 0 ? `${rasterFitHeight}px` : undefined}
+                style:transform={previewInteractionMode === "pan"
+                  ? `translate3d(${translateX}px, ${translateY}px, 0) scale(${scale})`
+                  : `scale(${scale})`}
+                style:transform-origin={previewInteractionMode === "pan" ? "center" : "top left"}
+              />
+            </div>
           </div>
         </div>
       {:else}
