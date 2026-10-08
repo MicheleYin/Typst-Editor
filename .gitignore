@@ -32,9 +32,12 @@ dist-ssr
 src-tauri/Entitlements.macos-appstore.plist
 
 # Apple signing & certificates — never commit (see src-tauri/signing/README.md)
-# Ignore everything in signing/ except the README
+# Ignore credentials and local-only notes; keep the platform build guides tracked.
 src-tauri/signing/*
 !src-tauri/signing/README.md
+!src-tauri/signing/IOS.md
+!src-tauri/signing/MACOS.md
+!src-tauri/signing/WINDOWS.md
 # Same artifacts anywhere in the repo (Xcode exports, Downloads, etc.)
 *.provisionprofile
 *.mobileprovision

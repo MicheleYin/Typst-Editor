@@ -1,0 +1,101 @@
+name: Build Windows
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Windows x64 (unsigned MSIX)
+    runs-on: windows-latest
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}\.cargo-target
+      RUST_TARGET: x86_64-pc-windows-msvc
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            .cargo-target
+          key: windows-x64-cargo-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: windows-x64-cargo-
+
+      - name: Install frontend dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build unsigned Windows executable
+        run: node scripts/tauri-cli.cjs build --target "$env:RUST_TARGET" --no-sign --no-bundle
+
+      - name: Stage unsigned MSIX layout
+        shell: pwsh
+        run: |
+          $layout = Join-Path $env:RUNNER_TEMP "typst-editor-msix-layout"
+          New-Item -ItemType Directory -Force -Path $layout, "$layout\Assets", "$layout\resources\fonts\bundled" | Out-Null
+
+          $exe = Join-Path $env:CARGO_TARGET_DIR "$env:RUST_TARGET\release\typst-editor.exe"
+          if (-not (Test-Path $exe)) { throw "Build output not found: $exe" }
+          Copy-Item $exe (Join-Path $layout "typst-editor.exe")
+          Copy-Item "src-tauri\resources\fonts\bundled\*" "$layout\resources\fonts\bundled\" -Recurse -Force -ErrorAction SilentlyContinue
+          Copy-Item "src-tauri\icons\128x128.png" "$layout\Assets\StoreLogo.png"
+          Copy-Item "src-tauri\icons\128x128.png" "$layout\Assets\Square150x150Logo.png"
+          Copy-Item "src-tauri\icons\128x128.png" "$layout\Assets\Square44x44Logo.png"
+
+          $version = (Get-Content "src-tauri\tauri.conf.json" -Raw | ConvertFrom-Json).version
+          $versionParts = @($version.Split('.'))
+          while ($versionParts.Count -lt 4) { $versionParts += "0" }
+          $packageVersion = $versionParts[0..3] -join "."
+          $manifest = @"
+          <?xml version=""1.0"" encoding=""utf-8""?>
+          <Package xmlns=""http://schemas.microsoft.com/appx/manifest/foundation/windows10"" xmlns:uap=""http://schemas.microsoft.com/appx/manifest/uap/windows10"" IgnorableNamespaces=""uap"">
+            <Identity Name=""MicheleYin.TypstEditor"" Publisher=""CN=Typst Editor Development"" Version=""$packageVersion"" ProcessorArchitecture=""x64"" />
+            <Properties>
+              <DisplayName>Typst Editor</DisplayName>
+              <PublisherDisplayName>Typst Editor</PublisherDisplayName>
+              <Logo>Assets\StoreLogo.png</Logo>
+            </Properties>
+            <Dependencies>
+              <TargetDeviceFamily Name=""Windows.Desktop"" MinVersion=""10.0.17763.0"" MaxVersionTested=""10.0.26100.0"" />
+            </Dependencies>
+            <Resources><Resource Language=""en-us"" /></Resources>
+            <Applications>
+              <Application Id=""App"" Executable=""typst-editor.exe"" EntryPoint=""Windows.FullTrustApplication"">
+                <uap:VisualElements DisplayName=""Typst Editor"" Description=""Typst Editor"" BackgroundColor=""transparent"" Square150x150Logo=""Assets\Square150x150Logo.png"" Square44x44Logo=""Assets\Square44x44Logo.png"" />
+              </Application>
+            </Applications>
+          </Package>
+          "@
+          Set-Content -Path (Join-Path $layout "AppxManifest.xml") -Value $manifest -Encoding utf8
+
+          $makeAppx = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\MakeAppx.exe" | Sort-Object FullName -Descending | Select-Object -First 1
+          if (-not $makeAppx) { throw "MakeAppx.exe was not found in the Windows SDK" }
+          $msix = Join-Path $env:RUNNER_TEMP "TypstEditor_$($packageVersion)_x64.msix"
+          & $makeAppx.FullName pack /d $layout /p $msix /o
+          if ($LASTEXITCODE -ne 0) { throw "MakeAppx failed with exit code $LASTEXITCODE" }
+
+          Compress-Archive -Path "$layout\*" -DestinationPath (Join-Path $env:RUNNER_TEMP "typst-editor-windows-x64-msix-layout.zip") -Force
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: typst-editor-windows-x64-unsigned-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/typst-editor-windows-x64-msix-layout.zip
+            ${{ runner.temp }}/TypstEditor_*.msix
+          if-no-files-found: error
+          retention-days: 14

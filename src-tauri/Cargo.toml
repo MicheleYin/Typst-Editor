@@ -40,3 +40,6 @@ resvg = "0.44"
 png = "0.17"
 typst-library = "0.14.2"
 
+[patch.crates-io]
+tao = { git = "https://github.com/tauri-apps/tao", rev = "f216350" }
+

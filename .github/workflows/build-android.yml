@@ -1,0 +1,90 @@
+name: Build Android
+
+on:
+  workflow_dispatch:
+    inputs:
+      format:
+        description: Android package format
+        required: true
+        type: choice
+        default: apk
+        options:
+          - apk
+          - aab
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Android ARM64 (${{ inputs.format }})
+    runs-on: ubuntu-latest
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/.cargo-target
+      ANDROID_NDK_VERSION: 27.2.12479018
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - uses: android-actions/setup-android@v4
+
+      - name: Install Android SDK and NDK
+        run: |
+          sdkmanager --install "platforms;android-35" "build-tools;35.0.0" "ndk;${ANDROID_NDK_VERSION}"
+          echo "NDK_HOME=${ANDROID_HOME}/ndk/${ANDROID_NDK_VERSION}" >> "$GITHUB_ENV"
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            .cargo-target
+          key: ubuntu-android-arm64-cargo-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: ubuntu-android-arm64-cargo-
+
+      - name: Install frontend dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Initialize Android project
+        run: node scripts/tauri-cli.cjs android init --ci --skip-targets-install
+
+      - name: Build unsigned Android package
+        env:
+          PACKAGE_FORMAT: ${{ inputs.format }}
+        run: |
+          if [ "$PACKAGE_FORMAT" = "apk" ]; then
+            node scripts/tauri-cli.cjs android build --ci --target aarch64 --apk
+          else
+            node scripts/tauri-cli.cjs android build --ci --target aarch64 --aab
+          fi
+
+      - name: Stage Android package
+        env:
+          PACKAGE_FORMAT: ${{ inputs.format }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/typst-editor-android"
+          find src-tauri/gen/android/app/build/outputs -type f -name "*.$PACKAGE_FORMAT" -exec cp {} "$RUNNER_TEMP/typst-editor-android/" \;
+          test -n "$(find "$RUNNER_TEMP/typst-editor-android" -type f -print -quit)"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: typst-editor-android-arm64-${{ inputs.format }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/typst-editor-android/*
+          if-no-files-found: error
+          retention-days: 14

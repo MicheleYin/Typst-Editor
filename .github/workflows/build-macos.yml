@@ -1,0 +1,53 @@
+name: Build macOS
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: macOS arm64 (unsigned)
+    runs-on: macos-15
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/.cargo-target
+      RUST_TARGET: aarch64-apple-darwin
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            .cargo-target
+          key: macos-arm64-cargo-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: macos-arm64-cargo-
+
+      - name: Install frontend dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build unsigned macOS app and DMG
+        run: node scripts/tauri-cli.cjs build --target "$RUST_TARGET" --no-sign --bundles app,dmg
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: typst-editor-macos-arm64-unsigned-${{ github.run_id }}
+          path: |
+            .cargo-target/${{ env.RUST_TARGET }}/release/bundle/dmg/*.dmg
+            .cargo-target/${{ env.RUST_TARGET }}/release/bundle/macos/*.app
+          if-no-files-found: error
+          retention-days: 14

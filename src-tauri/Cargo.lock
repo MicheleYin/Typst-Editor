@@ -7383,3 +7383,8 @@ dependencies = [
  "syn 3.0.6",
  "winnow 1.0.4",
 ]
+
+[[patch.unused]]
+name = "tao"
+version = "0.35.3"
+source = "git+https://github.com/tauri-apps/tao?rev=f216350#f2163508104413ef0609178dcebdd5803b496211"

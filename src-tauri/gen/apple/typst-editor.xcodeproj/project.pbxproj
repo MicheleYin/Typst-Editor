@@ -10,6 +10,8 @@
 		017D7B021756BE281F4A3D7E /* UIKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = AB54EA688A5429ED413D354A /* UIKit.framework */; };
 		0D12841FA11FCF08BC6526B8 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 8E3EBBCDC3896A8D85B45E91 /* Assets.xcassets */; };
 		1ED122570E25E8B7ED602F35 /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = E9E64C3A3D8FC97DBAE92923 /* Security.framework */; };
+		29449DE011E4B18D14537453 /* libapp.a in Resources */ = {isa = PBXBuildFile; fileRef = 36A12F289790012BC4025B68 /* libapp.a */; };
+		319DBEB72CBFC01A31EE51DC /* libapp.a in Resources */ = {isa = PBXBuildFile; fileRef = F8B3EAC9BD24C9B758877D8D /* libapp.a */; };
 		3F7A555E642850E1A09C10D1 /* Metal.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 4529903308546962F02BC63E /* Metal.framework */; };
 		65947C53178E05407CF2C345 /* QuartzCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 0F509583F04C2594E4E9C875 /* QuartzCore.framework */; };
 		6CAEFFEDED1E033A9C401BAE /* CoreGraphics.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 99BB8068285E05D2DE651AD0 /* CoreGraphics.framework */; };
@@ -25,6 +27,7 @@
 		0F509583F04C2594E4E9C875 /* QuartzCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = QuartzCore.framework; path = System/Library/Frameworks/QuartzCore.framework; sourceTree = SDKROOT; };
 		171E0B569EF06F83C9322449 /* lib.rs */ = {isa = PBXFileReference; lastKnownFileType = text; path = lib.rs; sourceTree = "<group>"; };
 		22771481CE088C94B04D0CA6 /* bindings.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = bindings.h; sourceTree = "<group>"; };
+		36A12F289790012BC4025B68 /* libapp.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; path = libapp.a; sourceTree = "<group>"; };
 		4529903308546962F02BC63E /* Metal.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Metal.framework; path = System/Library/Frameworks/Metal.framework; sourceTree = SDKROOT; };
 		45CEE8C2E96D98D9DBE6FF89 /* libapp.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; path = libapp.a; sourceTree = "<group>"; };
 		680FD5781FB0AA1BC7FDB1AC /* MetalKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = MetalKit.framework; path = System/Library/Frameworks/MetalKit.framework; sourceTree = SDKROOT; };
@@ -39,6 +42,7 @@
 		E997AADBC0A8513AD5D6EB44 /* assets */ = {isa = PBXFileReference; lastKnownFileType = folder; path = assets; sourceTree = SOURCE_ROOT; };
 		E9E64C3A3D8FC97DBAE92923 /* Security.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Security.framework; path = System/Library/Frameworks/Security.framework; sourceTree = SDKROOT; };
 		F368245846F8DBA1D98728E6 /* main.rs */ = {isa = PBXFileReference; lastKnownFileType = text; path = main.rs; sourceTree = "<group>"; };
+		F8B3EAC9BD24C9B758877D8D /* libapp.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; path = libapp.a; sourceTree = "<group>"; };
 		FA03D76DF91B0BDA098582EB /* Typst Editor.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Typst Editor.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -64,6 +68,7 @@
 		06279207E77A36A039747113 /* Externals */ = {
 			isa = PBXGroup;
 			children = (
+				B5495F2F1D70EBC31995FCEA /* arm64 */,
 			);
 			path = Externals;
 			sourceTree = "<group>";
@@ -119,12 +124,29 @@
 			path = "typst-editor";
 			sourceTree = "<group>";
 		};
+		770BEBE673866C25C6F6AF99 /* release */ = {
+			isa = PBXGroup;
+			children = (
+				36A12F289790012BC4025B68 /* libapp.a */,
+			);
+			path = release;
+			sourceTree = "<group>";
+		};
 		94AB5006827C6E5E3C4E1376 /* Products */ = {
 			isa = PBXGroup;
 			children = (
 				FA03D76DF91B0BDA098582EB /* Typst Editor.app */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		B5495F2F1D70EBC31995FCEA /* arm64 */ = {
+			isa = PBXGroup;
+			children = (
+				EB9E5A00D9C8565EA5A8FA6A /* debug */,
+				770BEBE673866C25C6F6AF99 /* release */,
+			);
+			path = arm64;
 			sourceTree = "<group>";
 		};
 		C26C33325C103D9090F402A6 /* bindings */ = {
@@ -148,6 +170,14 @@
 				C3F9171580F5E1B7DF074804 /* WebKit.framework */,
 			);
 			name = Frameworks;
+			sourceTree = "<group>";
+		};
+		EB9E5A00D9C8565EA5A8FA6A /* debug */ = {
+			isa = PBXGroup;
+			children = (
+				F8B3EAC9BD24C9B758877D8D /* libapp.a */,
+			);
+			path = debug;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -209,6 +239,8 @@
 				0D12841FA11FCF08BC6526B8 /* Assets.xcassets in Resources */,
 				6D6EB93B373166F2245466D3 /* LaunchScreen.storyboard in Resources */,
 				9ACB69E6339336C5A9EBC8F1 /* assets in Resources */,
+				29449DE011E4B18D14537453 /* libapp.a in Resources */,
+				319DBEB72CBFC01A31EE51DC /* libapp.a in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -266,7 +298,6 @@
 					"\".\"",
 				);
 				INFOPLIST_FILE = "typst-editor_iOS/Info.plist";
-				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
 				IPHONEOS_DEPLOYMENT_TARGET = "$(RECOMMENDED_IPHONEOS_DEPLOYMENT_TARGET)";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -289,9 +320,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = com.micheleyin.typst-editor;
 				PRODUCT_NAME = "Typst Editor";
 				SDKROOT = iphoneos;
-				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
-				SUPPORTS_MACCATALYST = NO;
-				TARGETED_DEVICE_FAMILY = 2;
+				TARGETED_DEVICE_FAMILY = "1,2";
 				VALID_ARCHS = arm64;
 			};
 			name = release;
@@ -368,7 +397,6 @@
 					"\".\"",
 				);
 				INFOPLIST_FILE = "typst-editor_iOS/Info.plist";
-				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
 				IPHONEOS_DEPLOYMENT_TARGET = "$(RECOMMENDED_IPHONEOS_DEPLOYMENT_TARGET)";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -391,9 +419,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = com.micheleyin.typst-editor;
 				PRODUCT_NAME = "Typst Editor";
 				SDKROOT = iphoneos;
-				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
-				SUPPORTS_MACCATALYST = NO;
-				TARGETED_DEVICE_FAMILY = 2;
+				TARGETED_DEVICE_FAMILY = "1,2";
 				VALID_ARCHS = arm64;
 			};
 			name = debug;
