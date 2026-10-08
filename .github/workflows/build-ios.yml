@@ -1,0 +1,54 @@
+name: Build iOS
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: iOS arm64 archive (unsigned)
+    runs-on: macos-15
+    timeout-minutes: 90
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/.cargo-target
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            .cargo-target
+          key: macos-ios-arm64-cargo-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: macos-ios-arm64-cargo-
+
+      - name: Install frontend dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Initialize iOS project
+        run: node scripts/tauri-cli.cjs ios init --ci --skip-targets-install
+
+      - name: Build unsigned iOS archive
+        run: node scripts/tauri-cli.cjs ios build --target aarch64 --archive-only --no-sign
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: typst-editor-ios-arm64-unsigned-${{ github.run_id }}
+          path: src-tauri/gen/apple/build/typst-editor_iOS.xcarchive
+          if-no-files-found: error
+          retention-days: 14
