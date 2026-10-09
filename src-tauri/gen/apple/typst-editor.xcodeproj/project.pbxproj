@@ -294,6 +294,7 @@
 					"\".\"",
 				);
 				INFOPLIST_FILE = "typst-editor_iOS/Info.plist";
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
 				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -313,7 +314,7 @@
 					"$(TOOLCHAIN_DIR)/usr/lib/swift/$(PLATFORM_NAME)",
 					"$(TOOLCHAIN_DIR)/usr/lib/swift-5.0/$(PLATFORM_NAME)",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.micheleyin.typst-editor;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.micheleyin.typst-editor";
 				PRODUCT_NAME = "Typst Editor";
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -393,6 +394,7 @@
 					"\".\"",
 				);
 				INFOPLIST_FILE = "typst-editor_iOS/Info.plist";
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
 				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -412,7 +414,7 @@
 					"$(TOOLCHAIN_DIR)/usr/lib/swift/$(PLATFORM_NAME)",
 					"$(TOOLCHAIN_DIR)/usr/lib/swift-5.0/$(PLATFORM_NAME)",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.micheleyin.typst-editor;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.micheleyin.typst-editor";
 				PRODUCT_NAME = "Typst Editor";
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
