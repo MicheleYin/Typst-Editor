@@ -63,6 +63,11 @@ if (!fs.existsSync(appPath)) {
   process.exit(1);
 }
 
+const quarantineResult = spawnSync("/usr/bin/xattr", ["-cr", appPath], { stdio: "inherit" });
+if (quarantineResult.status !== 0) {
+  process.exit(quarantineResult.status === null ? 1 : quarantineResult.status);
+}
+
 const outPkg =
   (process.env.MACOS_APPSTORE_PKG_OUT || "").trim() ||
   path.join(bundleDir, `${productName.replace(/[/\\]/g, "-")}.pkg`);

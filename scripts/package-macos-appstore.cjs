@@ -101,6 +101,7 @@ if (bundleIdResult.stdout.trim() !== config.identifier) {
 }
 
 fs.cpSync(sourceApp, stagedApp, { recursive: true });
+run("/usr/bin/xattr", ["-cr", stagedApp]);
 
 const profileSetting = (process.env.MACOS_APPSTORE_PROVISIONPROFILE || "").trim();
 const profilePath = profileSetting
