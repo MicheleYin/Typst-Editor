@@ -1,4 +1,4 @@
-name: Build iOS
+name: Build iPadOS
 
 on:
   workflow_dispatch:
@@ -8,7 +8,7 @@ permissions:
 
 jobs:
   build:
-    name: iOS arm64 archive (unsigned)
+    name: iPadOS arm64 archive (unsigned)
     runs-on: macos-26
     timeout-minutes: 90
     env:
@@ -73,8 +73,9 @@ jobs:
           sed -i '' "s/IPHONEOS_DEPLOYMENT_TARGET = [0-9.]*;/IPHONEOS_DEPLOYMENT_TARGET = $IPHONEOS_DEPLOYMENT_TARGET;/g" "$project_dir/typst-editor.xcodeproj/project.pbxproj"
           sed -i '' 's|$(TOOLCHAIN_DIR)|$(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain|g' "$project_dir/project.yml"
           sed -i '' 's|$(TOOLCHAIN_DIR)|$(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain|g' "$project_dir/typst-editor.xcodeproj/project.pbxproj"
+          sed -i '' 's/TARGETED_DEVICE_FAMILY = "1,2";/TARGETED_DEVICE_FAMILY = 2;/g' "$project_dir/typst-editor.xcodeproj/project.pbxproj"
 
-      - name: Build unsigned iOS archive
+      - name: Build unsigned iPadOS archive
         run: node scripts/tauri-cli.cjs ios build --target aarch64 --archive-only --no-sign
 
       - name: Verify archived app minimum iOS version
@@ -86,10 +87,15 @@ jobs:
             echo "::error::Expected iOS $IPHONEOS_DEPLOYMENT_TARGET, found iOS $minimum_version"
             exit 1
           fi
+          device_families="$(/usr/libexec/PlistBuddy -c 'Print :UIDeviceFamily' "$app/Info.plist" | tr -d '[:space:]')"
+          if [[ "$device_families" != "Array{2}" ]]; then
+            echo "::error::Expected an iPad-only archive (UIDeviceFamily [2]), found $device_families"
+            exit 1
+          fi
 
       - uses: actions/upload-artifact@v4
         with:
-          name: typst-editor-ios-arm64-unsigned-${{ github.run_id }}
+          name: typst-editor-ipados-arm64-unsigned-${{ github.run_id }}
           path: src-tauri/gen/apple/build/typst-editor_iOS.xcarchive
           if-no-files-found: error
           retention-days: 14
