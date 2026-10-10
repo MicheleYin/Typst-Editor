@@ -87,7 +87,10 @@ bun run tauri build
 
 macOS convenience script: `bun run build:macos` (see `package.json` for variants).
 
-For **macOS App Store** or **iOS** packaging, see `src-tauri/signing/LOCAL_APPSTORE_BUILD.md` and the `build:macos:appstore` / `build:ios:appstore` scripts in `package.json`.
+For **macOS App Store** `.pkg` packaging, Developer ID signing, and notarization,
+see [the macOS signing guide](src-tauri/signing/MACOS.md). For iPadOS packaging,
+see [the iPadOS signing guide](src-tauri/signing/IOS.md). The local App Store
+certificate identities and provisioning profile are never committed.
 
 ---
 
