@@ -71,6 +71,8 @@ jobs:
           sed -i '' "s/iOS: [0-9.]*$/iOS: $IPHONEOS_DEPLOYMENT_TARGET/" "$project_dir/project.yml"
           sed -i '' "s/platform :ios, '[0-9.]*'/platform :ios, '$IPHONEOS_DEPLOYMENT_TARGET'/" "$project_dir/Podfile"
           sed -i '' "s/IPHONEOS_DEPLOYMENT_TARGET = [0-9.]*;/IPHONEOS_DEPLOYMENT_TARGET = $IPHONEOS_DEPLOYMENT_TARGET;/g" "$project_dir/typst-editor.xcodeproj/project.pbxproj"
+          sed -i '' 's|$(TOOLCHAIN_DIR)|$(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain|g' "$project_dir/project.yml"
+          sed -i '' 's|$(TOOLCHAIN_DIR)|$(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain|g' "$project_dir/typst-editor.xcodeproj/project.pbxproj"
 
       - name: Build unsigned iOS archive
         run: node scripts/tauri-cli.cjs ios build --target aarch64 --archive-only --no-sign
