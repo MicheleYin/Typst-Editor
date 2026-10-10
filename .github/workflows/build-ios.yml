@@ -9,10 +9,11 @@ permissions:
 jobs:
   build:
     name: iOS arm64 archive (unsigned)
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 90
     env:
       CARGO_TARGET_DIR: ${{ github.workspace }}/.cargo-target
+      IPHONEOS_DEPLOYMENT_TARGET: "15.0"
     steps:
       - uses: actions/checkout@v4
 
@@ -28,23 +29,63 @@ jobs:
         with:
           targets: aarch64-apple-ios
 
+      - name: Identify iOS toolchain
+        id: ios-toolchain
+        run: |
+          toolchain_fingerprint="$({
+            xcode-select -p
+            xcodebuild -version
+            xcrun --sdk iphoneos --show-sdk-version
+          } | shasum -a 256 | cut -c1-16)"
+          echo "cache_key=$toolchain_fingerprint" >> "$GITHUB_OUTPUT"
+
       - uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             .cargo-target
-          key: macos-ios-arm64-cargo-${{ hashFiles('src-tauri/Cargo.lock') }}
-          restore-keys: macos-ios-arm64-cargo-
+          key: macos-ios-arm64-${{ steps.ios-toolchain.outputs.cache_key }}-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: macos-ios-arm64-${{ steps.ios-toolchain.outputs.cache_key }}-
 
       - name: Install frontend dependencies
         run: bun install --frozen-lockfile
 
+      - name: Verify Xcode and iOS SDK
+        run: |
+          xcodebuild -version
+          sdk_version="$(xcrun --sdk iphoneos --show-sdk-version)"
+          sdk_major="${sdk_version%%.*}"
+          echo "iOS SDK: $sdk_version"
+          if (( sdk_major < 26 )); then
+            echo "::error::iOS SDK 26 or later is required, found $sdk_version"
+            exit 1
+          fi
+
       - name: Initialize iOS project
         run: node scripts/tauri-cli.cjs ios init --ci --skip-targets-install
 
+      - name: Enforce iOS deployment target
+        run: |
+          project_dir="src-tauri/gen/apple"
+          sed -i '' "s/iOS: [0-9.]*$/iOS: $IPHONEOS_DEPLOYMENT_TARGET/" "$project_dir/project.yml"
+          sed -i '' "s/platform :ios, '[0-9.]*'/platform :ios, '$IPHONEOS_DEPLOYMENT_TARGET'/" "$project_dir/Podfile"
+          sed -i '' "s/IPHONEOS_DEPLOYMENT_TARGET = [0-9.]*;/IPHONEOS_DEPLOYMENT_TARGET = $IPHONEOS_DEPLOYMENT_TARGET;/g" "$project_dir/typst-editor.xcodeproj/project.pbxproj"
+          sed -i '' 's|$(TOOLCHAIN_DIR)|$(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain|g' "$project_dir/project.yml"
+          sed -i '' 's|$(TOOLCHAIN_DIR)|$(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain|g' "$project_dir/typst-editor.xcodeproj/project.pbxproj"
+
       - name: Build unsigned iOS archive
         run: node scripts/tauri-cli.cjs ios build --target aarch64 --archive-only --no-sign
+
+      - name: Verify archived app minimum iOS version
+        run: |
+          app="src-tauri/gen/apple/build/typst-editor_iOS.xcarchive/Products/Applications/Typst Editor.app"
+          minimum_version="$(/usr/libexec/PlistBuddy -c 'Print :MinimumOSVersion' "$app/Info.plist")"
+          echo "Archived app minimum iOS version: $minimum_version"
+          if [[ "$minimum_version" != "$IPHONEOS_DEPLOYMENT_TARGET" ]]; then
+            echo "::error::Expected iOS $IPHONEOS_DEPLOYMENT_TARGET, found iOS $minimum_version"
+            exit 1
+          fi
 
       - uses: actions/upload-artifact@v4
         with:

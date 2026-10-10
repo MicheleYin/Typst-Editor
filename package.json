@@ -11,8 +11,10 @@
     "build:macos": "node scripts/tauri-cli.cjs build",
     "gen:macos-appstore-entitlements": "node scripts/gen-macos-appstore-entitlements.cjs",
     "sign:macos:appstore-pkg": "node scripts/sign-macos-appstore-pkg.cjs",
+    "package:macos:appstore": "node scripts/package-macos-appstore.cjs",
     "build:macos:appstore": "node scripts/gen-macos-appstore-entitlements.cjs && node scripts/ensure-macos-appstore-provisionprofile.cjs && node scripts/tauri-cli.cjs build --bundles app --target aarch64-apple-darwin -c src-tauri/tauri.macos-appstore.json && node scripts/sign-macos-appstore-pkg.cjs",
     "build:ios:appstore": "node scripts/tauri-cli.cjs ios build --export-method app-store-connect",
+    "export:ios:appstore": "node scripts/export-ios-appstore.cjs",
     "ios:init": "node scripts/tauri-cli.cjs ios init --ci",
     "ios:open": "node scripts/tauri-cli.cjs ios build -- --open",
     "fonts:download": "node scripts/download-bundled-fonts.mjs"
