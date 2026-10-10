@@ -29,14 +29,24 @@ jobs:
         with:
           targets: aarch64-apple-ios
 
+      - name: Identify iOS toolchain
+        id: ios-toolchain
+        run: |
+          toolchain_fingerprint="$({
+            xcode-select -p
+            xcodebuild -version
+            xcrun --sdk iphoneos --show-sdk-version
+          } | shasum -a 256 | cut -c1-16)"
+          echo "cache_key=$toolchain_fingerprint" >> "$GITHUB_OUTPUT"
+
       - uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             .cargo-target
-          key: macos-ios-arm64-cargo-${{ hashFiles('src-tauri/Cargo.lock') }}
-          restore-keys: macos-ios-arm64-cargo-
+          key: macos-ios-arm64-${{ steps.ios-toolchain.outputs.cache_key }}-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: macos-ios-arm64-${{ steps.ios-toolchain.outputs.cache_key }}-
 
       - name: Install frontend dependencies
         run: bun install --frozen-lockfile
